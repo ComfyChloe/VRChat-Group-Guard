@@ -10,6 +10,7 @@ class InstanceLoggerService {
   private currentLogFilePath: string | null = null;
   private currentWorldId: string | null = null;
   private currentInstanceId: string | null = null;
+  private currentLocationString: string | null = null;
   // Removed static sessionsDir init
 
   constructor() {
@@ -45,6 +46,9 @@ class InstanceLoggerService {
 
   public clearSessions() {
       try {
+          // Check if we are currently tracking a session before wiping
+          const wasTracking = !!this.currentSessionId;
+
           const sessionsDir = this.getSessionsDir();
           const files = fs.readdirSync(sessionsDir);
           for (const file of files) {
@@ -52,9 +56,22 @@ class InstanceLoggerService {
                   fs.unlinkSync(path.join(sessionsDir, file));
               }
           }
-          this.currentSessionId = null;
-          this.currentLogFilePath = null;
+          
+          // Reset current session state
+          this.cleanupCurrentSession();
           log.info('[InstanceLogger] Cleared all session logs');
+
+          // If we were tracking a session, restart it immediately to keep live data visible
+          if (wasTracking && this.currentLocationString && this.currentWorldId && this.currentInstanceId) {
+               log.info('[InstanceLogger] Restarting live session log after clear...');
+               this.handleLocationChange({
+                   worldId: this.currentWorldId,
+                   instanceId: this.currentInstanceId,
+                   location: this.currentLocationString,
+                   timestamp: new Date().toISOString()
+               });
+          }
+
           return true;
       } catch (error) {
           log.error('[InstanceLogger] Failed to clear sessions:', error);
@@ -70,6 +87,8 @@ class InstanceLoggerService {
 
   private handleLocationChange(event: { worldId: string; instanceId: string; location: string; timestamp: string }) {
     try {
+      this.currentLocationString = event.location;
+
       // 1. Close previous session if active
       if (this.currentSessionId && this.currentLogFilePath) {
          this.appendToFile({
@@ -130,6 +149,14 @@ class InstanceLoggerService {
       fs.writeFileSync(this.currentLogFilePath, JSON.stringify(metadata) + '\n');
       log.info(`[InstanceLogger] Started new session log: ${filename}`);
 
+      // 3. Log initial Location Change event so the log isn't empty
+      this.appendToFile({
+          type: 'LOCATION_CHANGE',
+          timestamp: event.timestamp,
+          actorDisplayName: 'System',
+          details: { location: event.location }
+      });
+
     } catch (error) {
        log.error('[InstanceLogger] Failed to handle location change:', error);
     }
@@ -138,6 +165,8 @@ class InstanceLoggerService {
   private cleanupCurrentSession() {
       this.currentSessionId = null;
       this.currentLogFilePath = null;
+      // We do NOT clear currentWorldId/InstanceId/LocationString here, 
+      // as they represent the current game state, not just the logging state.
   }
 
   private handleWorldNameChange(event: { name: string; timestamp: string }) {
@@ -234,7 +263,7 @@ class InstanceLoggerService {
           const lines = content.split('\n').filter(l => l.trim());
           const events = lines.map(l => {
               try { return JSON.parse(l); } catch { return null; }
-          }).filter(e => e !== null);
+          }).filter(e => e !== null && !e.meta); // Filter out metadata line
           
           return events;
       } catch (error) {

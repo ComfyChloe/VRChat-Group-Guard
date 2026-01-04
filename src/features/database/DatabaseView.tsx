@@ -2,6 +2,7 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { GlassPanel } from '../../components/ui/GlassPanel';
 import { useGroupStore } from '../../stores/groupStore';
 import { NeonButton } from '../../components/ui/NeonButton';
+import { Modal } from '../../components/ui/Modal';
 
 interface Session {
     sessionId: string;
@@ -34,6 +35,9 @@ export const DatabaseView: React.FC = () => {
     
     // Filtering state
     const [selectedActor, setSelectedActor] = useState<string | null>(null);
+
+    // Modal state
+    const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
 
     // Initial Load
     useEffect(() => {
@@ -122,13 +126,16 @@ export const DatabaseView: React.FC = () => {
         return sessionEvents.filter(e => e.actorDisplayName === selectedActor);
     }, [sessionEvents, selectedActor]);
 
-    const handleClearDatabase = async () => {
-        if (confirm('Are you sure you want to clear the entire instance database? This cannot be undone.')) {
-            const success = await window.electron.database.clearSessions();
-            if (success) {
-                loadSessions();
-            }
+    const handleClearDatabase = () => {
+        setIsClearConfirmOpen(true);
+    };
+
+    const confirmClear = async () => {
+        const success = await window.electron.database.clearSessions();
+        if (success) {
+            loadSessions();
         }
+        setIsClearConfirmOpen(false);
     };
 
     return (
@@ -308,6 +315,45 @@ export const DatabaseView: React.FC = () => {
                      </div>
                  )}
             </div>
+
+            {/* Clear Database Confirmation Modal */}
+            <Modal
+                isOpen={isClearConfirmOpen}
+                onClose={() => setIsClearConfirmOpen(false)}
+                title="Clear Database"
+                width="400px"
+                footer={
+                    <>
+                        <NeonButton 
+                            variant="ghost" 
+                            onClick={() => setIsClearConfirmOpen(false)}
+                        >
+                            Cancel
+                        </NeonButton>
+                        <NeonButton 
+                            variant="danger" 
+                            onClick={confirmClear}
+                            glow
+                        >
+                            Yes, Clear Everything
+                        </NeonButton>
+                    </>
+                }
+            >
+                <div style={{ color: 'var(--color-text-secondary)', lineHeight: '1.6' }}>
+                    Are you sure you want to clear the entire instance database?
+                    <br /><br />
+                    <span style={{ color: '#ef4444', fontWeight: 500 }}>
+                        This cannot be undone.
+                    </span>
+                    <br />
+                    All logged sessions and event history will be permanently deleted.
+                    <br /><br />
+                    <span style={{ fontSize: '0.85rem', color: 'var(--color-text-dim)', fontStyle: 'italic' }}>
+                        Note: If you are currently playing VRChat, you will need to rejoin the world to begin populating the new database.
+                    </span>
+                </div>
+            </Modal>
         </div>
     );
 };
