@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import { GlassPanel } from '../../components/ui/GlassPanel';
 import { useGroupStore } from '../../stores/groupStore';
+import { useUserProfileStore } from '../../stores/userProfileStore';
 import { NeonButton } from '../../components/ui/NeonButton';
 import { Modal } from '../../components/ui/Modal';
 
@@ -12,7 +13,6 @@ interface Session {
     groupId: string | null;
     startTime: string;
     worldName: string | null;
-    filename: string;
 }
 
 interface InstanceEvent {
@@ -33,8 +33,9 @@ const progressStyles = `
 `;
 
 export const DatabaseView: React.FC = () => {
-    const { selectedGroup } = useGroupStore();
-    const [sessions, setSessions] = useState<Session[]>([]);
+     const { selectedGroup } = useGroupStore();
+     const { openProfile } = useUserProfileStore();
+     const [sessions, setSessions] = useState<Session[]>([]);
     const [isLoading, setIsLoading] = useState(false);
     
     // Selection state
@@ -128,7 +129,7 @@ export const DatabaseView: React.FC = () => {
         setIsLoadingEvents(true);
         setSelectedActor(null);
         try {
-            const events = await window.electron.database.getSessionEvents(session.filename);
+            const events = await window.electron.database.getSessionEvents(session.sessionId);
             setSessionEvents((events as InstanceEvent[]) || []);
         } catch (error) {
             console.error("Failed to load events", error);
@@ -180,7 +181,7 @@ export const DatabaseView: React.FC = () => {
         setRallyResult(null);
         
         try {
-            const result = await window.electron.database.rallyFromSession(selectedSession.filename);
+            const result = await window.electron.database.rallyFromSession(selectedSession.sessionId);
             setRallyResult(result);
         } catch (error: unknown) {
             const err = error as { message?: string };
@@ -409,8 +410,24 @@ export const DatabaseView: React.FC = () => {
                                                              <EventBadge type={event.type} />
                                                          </td>
                                                          <td style={{ padding: '0.6rem 0.8rem', fontWeight: 500 }}>
-                                                             {event.actorDisplayName}
-                                                         </td>
+                                                            <span
+                                                                style={{ 
+                                                                    cursor: event.actorUserId ? 'pointer' : 'default',
+                                                                    textDecoration: event.actorUserId ? 'underline' : 'none',
+                                                                    textDecorationColor: 'rgba(255,255,255,0.3)',
+                                                                    textUnderlineOffset: '2px'
+                                                                }}
+                                                                onClick={(e) => {
+                                                                    if (event.actorUserId) {
+                                                                        e.stopPropagation();
+                                                                        openProfile(event.actorUserId);
+                                                                    }
+                                                                }}
+                                                                title={event.actorUserId ? 'View Profile' : undefined}
+                                                            >
+                                                                {event.actorDisplayName}
+                                                            </span>
+                                                        </td>
                                                          <td style={{ padding: '0.6rem 0.8rem', color: 'rgba(255,255,255,0.6)', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                                              {JSON.stringify(event.details || '')}
                                                          </td>

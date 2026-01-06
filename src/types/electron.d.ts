@@ -220,6 +220,33 @@ export interface AutoModRule {
     createdAt?: string;
 }
 
+// Type for Live Entity (used in instance monitoring)
+export interface LiveEntity {
+    id: string;
+    displayName: string;
+    rank: string;
+    isGroupMember: boolean;
+    status: 'active' | 'kicked' | 'joining';
+    avatarUrl?: string;
+    lastUpdated: number;
+}
+
+// Type for Rally Target
+export interface RallyTarget {
+    id?: string;
+    displayName?: string;
+    thumbnailUrl?: string;
+}
+
+// Type for AutoMod user check input
+export interface AutoModUserInput {
+    id: string;
+    displayName: string;
+    tags?: string[];
+    dateJoined?: string;
+    trustLevel?: string;
+}
+
 export interface ElectronAPI {
   log: (level: 'info' | 'warn' | 'error', message: string) => void;
   getVersion: () => string;
@@ -238,11 +265,17 @@ export interface ElectronAPI {
   getMyGroups: () => Promise<GroupsResult>;
   getGroupDetails: (groupId: string) => Promise<{ success: boolean; group?: VRChatGroup; error?: string }>;
   getGroupMembers: (groupId: string, offset?: number, n?: number) => Promise<{ success: boolean; members?: GroupMember[]; error?: string }>;
+  searchGroupMembers: (groupId: string, query: string, n?: number) => Promise<{ success: boolean; members?: GroupMember[]; error?: string }>;
   getGroupRequests: (groupId: string) => Promise<{ success: boolean; requests?: GroupRequest[]; error?: string }>;
+  respondToGroupRequest: (groupId: string, userId: string, action: 'accept' | 'deny') => Promise<{ success: boolean; error?: string }>;
   getGroupBans: (groupId: string) => Promise<{ success: boolean; bans?: GroupBan[]; error?: string }>;
   getGroupInstances: (groupId: string) => Promise<{ success: boolean; instances?: VRChatInstance[]; error?: string }>;
+  banUser: (groupId: string, userId: string) => Promise<{ success: boolean; error?: string }>;
 
-
+  // Role Management
+  getGroupRoles: (groupId: string) => Promise<{ success: boolean; roles?: unknown[]; error?: string }>;
+  addMemberRole: (groupId: string, userId: string, roleId: string) => Promise<{ success: boolean; error?: string }>;
+  removeMemberRole: (groupId: string, userId: string, roleId: string) => Promise<{ success: boolean; error?: string }>;
   
   // Audit API
   getGroupAuditLogs: (groupId: string) => Promise<AuditLogsResult>;
@@ -304,15 +337,17 @@ export interface ElectronAPI {
   // Instance Presence API
   instance: {
       // NEW LIVE OPS API
-      scanSector: (groupId: string) => Promise<any[]>;
+      scanSector: (groupId: string) => Promise<LiveEntity[]>;
       recruitUser: (groupId: string, userId: string) => Promise<{ success: boolean; error?: string }>;
+      unbanUser: (groupId: string, userId: string) => Promise<{ success: boolean; error?: string }>;
       kickUser: (groupId: string, userId: string) => Promise<{ success: boolean; error?: string }>;
       // rallyForces: (groupId: string) => Promise<{ success: boolean; count?: number; error?: string }>;
-      getRallyTargets: (groupId: string) => Promise<{ success: boolean; targets?: any[]; error?: string }>;
+      getRallyTargets: (groupId: string) => Promise<{ success: boolean; targets?: RallyTarget[]; error?: string }>;
       inviteToCurrent: (userId: string) => Promise<{ success: boolean; error?: string }>;
-      closeInstance: () => Promise<{ success: boolean; error?: string }>;
+      closeInstance: (worldId?: string, instanceId?: string) => Promise<{ success: boolean; error?: string }>;
+      inviteSelf: (worldId: string, instanceId: string) => Promise<{ success: boolean; error?: string }>;
       getInstanceInfo: () => Promise<{ success: boolean; worldId?: string; instanceId?: string; name?: string; imageUrl?: string; error?: string }>;
-      onEntityUpdate: (callback: (entity: any) => void) => () => void;
+      onEntityUpdate: (callback: (entity: LiveEntity) => void) => () => void;
       
       getCurrentGroup: () => Promise<string | null>;
       onGroupChanged: (callback: (groupId: string | null) => void) => () => void;
@@ -336,7 +371,7 @@ export interface ElectronAPI {
       getRules: () => Promise<AutoModRule[]>;
       saveRule: (rule: AutoModRule) => Promise<AutoModRule>;
       deleteRule: (ruleId: number) => Promise<boolean>;
-      checkUser: (user: any) => Promise<{ action: 'ALLOW' | 'REJECT' | 'AUTO_BLOCK' | 'NOTIFY_ONLY'; reason?: string; ruleName?: string }>;
+      checkUser: (user: AutoModUserInput) => Promise<{ action: 'ALLOW' | 'REJECT' | 'AUTO_BLOCK' | 'NOTIFY_ONLY'; reason?: string; ruleName?: string }>;
   };
 }
 

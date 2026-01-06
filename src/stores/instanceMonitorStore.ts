@@ -7,12 +7,25 @@ export interface LivePlayerInfo {
   joinTime: number;
 }
 
+export interface LiveEntity {
+    id: string;
+    displayName: string;
+    rank: string;
+    isGroupMember: boolean;
+    status: 'active' | 'kicked' | 'joining' | 'left';
+    avatarUrl?: string;
+    lastUpdated?: number;
+}
+
 export interface InstanceMonitorState {
   currentWorldId: string | null;
   currentWorldName: string | null;
   currentInstanceId: string | null;
   currentLocation: string | null; // worldId:instanceId
+  currentGroupId: string | null;
+  instanceImageUrl: string | null;
   players: Record<string, LivePlayerInfo>; // Keyed by displayName
+  liveScanResults: LiveEntity[]; // Persisted scan results with history
   
   // Actions
   addPlayer: (player: LivePlayerInfo) => void;
@@ -20,7 +33,12 @@ export interface InstanceMonitorState {
   setWorldId: (id: string) => void;
   setWorldName: (name: string) => void;
   setInstanceInfo: (id: string, location: string) => void;
+  setInstanceImage: (url: string) => void;
   clearInstance: () => void;
+  updateLiveScan: (newEntities: LiveEntity[]) => void;
+  clearLiveScan: () => void;
+  setCurrentGroupId: (groupId: string | null) => void;
+  setEntityStatus: (id: string, status: LiveEntity['status']) => void;
 }
 
 export const useInstanceMonitorStore = create<InstanceMonitorState>((set) => ({
@@ -28,7 +46,10 @@ export const useInstanceMonitorStore = create<InstanceMonitorState>((set) => ({
   currentWorldName: null,
   currentInstanceId: null,
   currentLocation: null,
+  currentGroupId: null, // Add default
+  instanceImageUrl: null,
   players: {},
+  liveScanResults: [],
 
   addPlayer: (player) =>
     set((state) => ({
@@ -47,7 +68,41 @@ export const useInstanceMonitorStore = create<InstanceMonitorState>((set) => ({
 
   setWorldId: (id) => set({ currentWorldId: id }),
   setWorldName: (name) => set({ currentWorldName: name }),
-  setInstanceInfo: (id, location) => set({ currentInstanceId: id, currentLocation: location }),
+  setInstanceInfo: (id, location) => set((state) => {
+      if (state.currentInstanceId !== id) {
+          return { currentInstanceId: id, currentLocation: location, liveScanResults: [] };
+      }
+      return { currentInstanceId: id, currentLocation: location };
+  }),
   
-  clearInstance: () => set({ players: {}, currentWorldId: null, currentWorldName: null, currentInstanceId: null, currentLocation: null }),
+  // New action
+  setCurrentGroupId: (groupId) => set({ currentGroupId: groupId }),
+  
+  setInstanceImage: (url) => set({ instanceImageUrl: url }),
+  
+  clearInstance: () => set({ players: {}, currentWorldId: null, currentWorldName: null, currentInstanceId: null, currentLocation: null, currentGroupId: null, instanceImageUrl: null }),
+
+  updateLiveScan: (newEntities) => set((state) => {
+      const nextMap = new Map<string, LiveEntity>();
+
+      // 1. Carry over previous entities, default them to 'left' if they were active
+      state.liveScanResults.forEach(e => {
+          const nextStatus = (e.status === 'active' || e.status === 'joining') ? 'left' : e.status;
+          nextMap.set(e.id, { ...e, status: nextStatus });
+      });
+
+      // 2. Update with current results (revive to 'active')
+      newEntities.forEach(r => {
+          const existing = nextMap.get(r.id);
+          nextMap.set(r.id, { ...(existing || {}), ...r, status: 'active' });
+      });
+
+      return { liveScanResults: Array.from(nextMap.values()) };
+  }),
+
+  clearLiveScan: () => set({ liveScanResults: [] }),
+
+  setEntityStatus: (id, status) => set((state) => ({
+      liveScanResults: state.liveScanResults.map(e => e.id === id ? { ...e, status } : e)
+  }))
 }));

@@ -47,7 +47,10 @@ export const PageTransition: React.FC<PageTransitionProps> = ({ children, classN
       className={className}
       style={{
         width: '100%',
-        height: '100%',
+        flex: 1,
+        display: 'flex',
+        flexDirection: 'column',
+        minHeight: 0, // Critical for nested scrolling
         ...props.style
       }}
       {...props}

@@ -26,21 +26,61 @@ export const InstancesListDialog: React.FC<InstancesListDialogProps> = ({ isOpen
         }
     };
 
-    const handleJoin = (instance: VRChatInstance) => {
+    const handleJoin = async (instance: VRChatInstance) => {
         const location = instance.location || instance.id || '';
-        console.log('Joining instance:', location);
-        // TODO: Implement inviteMyselfTo functionality
+        // Parse worldId and instanceId from location
+        // Location format: wrld_xxx:12345~... or just worldId:instanceId
+        
+        let worldId = instance.worldId || instance.world?.id;
+        let instanceId = instance.instanceId;
+
+        // Fallback parsing if fields missing
+        if ((!worldId || !instanceId) && location) {
+            const parts = location.split(':');
+            if (parts.length >= 2) {
+                worldId = parts[0];
+                instanceId = parts.slice(1).join(':'); // everything after first colon
+            }
+        }
+
+        if (worldId && instanceId) {
+            console.log('Joining instance:', worldId, instanceId);
+            const res = await window.electron.instance.inviteSelf(worldId, instanceId);
+            if (!res.success) {
+                console.error('Failed to join:', res.error);
+                // In a perfect world we would show a notification here
+            }
+        }
     };
 
     const handleCloseInstance = (instance: VRChatInstance) => {
         setConfirmClose(instance);
     };
 
-    const confirmCloseInstance = () => {
+    const confirmCloseInstance = async () => {
         if (confirmClose) {
             const location = confirmClose.location || confirmClose.id || '';
-            console.log('Closing instance:', location);
-            // TODO: Implement closeInstance functionality
+            let worldId = confirmClose.worldId || confirmClose.world?.id;
+            let instanceId = confirmClose.instanceId;
+            
+             if ((!worldId || !instanceId) && location) {
+                const parts = location.split(':');
+                if (parts.length >= 2) {
+                    worldId = parts[0];
+                    instanceId = parts.slice(1).join(':');
+                }
+            }
+
+            console.log('Closing instance:', worldId, instanceId);
+            if (worldId && instanceId) {
+                const res = await window.electron.instance.closeInstance(worldId, instanceId);
+                 if (!res.success) {
+                    console.error('Failed to close:', res.error);
+                } else {
+                    // Refresh list on success
+                    handleRefresh();
+                }
+            }
             setConfirmClose(null);
         }
     };

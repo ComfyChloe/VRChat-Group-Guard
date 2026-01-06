@@ -4,72 +4,131 @@ import { GlassPanel } from '../../../components/ui/GlassPanel';
 import { LiveBadge } from '../../../components/ui/LiveBadge';
 import { useGroupStore } from '../../../stores/groupStore';
 import { useInstanceMonitorStore } from '../../../stores/instanceMonitorStore';
+import { useUserProfileStore } from '../../../stores/userProfileStore';
 
 export const InstanceMonitorWidget: React.FC = () => {
-    const { currentWorldName, currentWorldId, currentLocation, players } = useInstanceMonitorStore();
-    const { instances, myGroups } = useGroupStore();
+    const { openProfile } = useUserProfileStore();
+    const { currentWorldName, currentWorldId, currentLocation, currentGroupId, players } = useInstanceMonitorStore();
+    const { instances, myGroups, selectedGroup: activeGroup } = useGroupStore();
 
-    // Check if current location matches any active group instance
-    const groupInstance = currentLocation ? instances.find(inst => {
-         // Check both location field and manual ID construction
+    // Check if current location matches any active group instance (Strict or Robust)
+    let groupInstance = currentLocation ? instances.find(inst => {
+         // 1. Strict Match
          if (inst.location === currentLocation) return true;
-         if (inst.worldId && inst.instanceId && `${inst.worldId}:${inst.instanceId}` === currentLocation) return true;
-         // Partial match for world ID
-         if (inst.worldId === currentWorldId) return true;
-         return false;
+         const instFullId = inst.worldId && inst.instanceId ? `${inst.worldId}:${inst.instanceId}` : '';
+         if (instFullId === currentLocation) return true;
+
+         // 2. Robust Match: Check World ID + Base Instance ID (ignoring tags)
+         if (!currentLocation.includes(':')) return false;
+         
+         const [currWId, currIId] = currentLocation.split(':');
+         const instWId = inst.worldId;
+         // inst.instanceId might contain tags, so split it too
+         const instIId = inst.instanceId || (inst.location ? inst.location.split(':')[1] : '');
+
+         if (currWId !== instWId) return false;
+         
+         // Compare base IDs (everything before first '~')
+         const currBase = currIId.split('~')[0];
+         const instBase = instIId.split('~')[0];
+
+         return currBase && instBase && currBase === instBase;
     }) : null;
 
-    // Determine display name: prioritize group instance data as it's cleaner
-    const displayWorldName = groupInstance?.world?.name || currentWorldName || 'Unknown World';
+    // Fallback: Use log data to detect group instance if API list is stale or mismatched
+    if (!groupInstance && currentGroupId && activeGroup && currentGroupId === activeGroup.id) {
+         // Create a synthetic instance object to allow the UI to render "Group Instance" mode
+          
+         groupInstance = {
+             location: currentLocation || '',
+             worldId: currentWorldId || '',
+             instanceId: currentWorldId && currentLocation ? currentLocation.replace(`${currentWorldId}:`, '') : '',
+             ownerId: activeGroup.id,
+             count: Object.keys(players).length,
+             world: {
+                 name: currentWorldName || 'Unknown World'
+             },
+             group: activeGroup
+         } as any;
+    }
 
-    const playerCount = Object.keys(players).length;
-    const playerList = Object.values(players).sort((a, b) => b.joinTime - a.joinTime);
+    // Check if the matched instance belongs to the CURRENTLY SELECTED group
+    const isCurrentGroupInstance = groupInstance && activeGroup && groupInstance.ownerId === activeGroup.id;
 
     // If no world ID, show status (Name might be missing in some log formats)
     if (!currentWorldId && !currentWorldName) {
         return (
-            <GlassPanel style={{ height: '100%', padding: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column' }}>
+            <GlassPanel style={{ height: '100%', padding: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column' }}>
                 <div style={{ textAlign: 'center', color: 'var(--color-text-dim)' }}>
-                    <div style={{ fontWeight: 600, color: 'var(--color-text-secondary)', fontSize: '1.1rem', marginBottom: '0.5rem' }}>Waiting for VRChat...</div>
-                    <div style={{ fontSize: '0.9rem' }}>Join a world to see live data</div>
+                    <div style={{ fontWeight: 600, color: 'var(--color-text-secondary)', fontSize: '0.95rem', marginBottom: '0.4rem' }}>Waiting for VRChat...</div>
+                    <div style={{ fontSize: '0.8rem' }}>Join a world to see live data</div>
+                </div>
+            </GlassPanel>
+        );
+    }
+    
+    // If user is in VRChat but NOT in a tracked group instance, show Standby mode
+    if (!groupInstance) {
+        return (
+             <GlassPanel style={{ height: '100%', padding: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column' }}>
+                <div style={{ textAlign: 'center', color: 'var(--color-text-dim)', maxWidth: '90%' }}>
+                    <div style={{ 
+                        width: '10px', height: '10px', borderRadius: '50%', background: 'var(--color-text-dim)', 
+                        margin: '0 auto 0.75rem auto', boxShadow: '0 0 10px rgba(255,255,255,0.1)' 
+                    }} />
+                    <div style={{ fontWeight: 600, color: 'var(--color-text-secondary)', fontSize: '0.9rem', marginBottom: '0.4rem' }}>
+                        Roaming Mode
+                    </div>
+                    <div style={{ fontSize: '0.75rem', opacity: 0.7 }}>
+                        You are in <strong>{currentWorldName}</strong>
+                    </div>
+                    <div style={{ fontSize: '0.7rem', marginTop: '0.75rem', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '0.4rem' }}>
+                        Join a <strong>{activeGroup?.name || 'Group'}</strong> instance to activate Command Center
+                    </div>
                 </div>
             </GlassPanel>
         );
     }
 
+    // Determine display name: prioritize group instance data as it's cleaner
+    const displayWorldName = groupInstance?.world?.name || currentWorldName || 'Unknown World';
+    const playerCount = Object.keys(players).length;
+    const playerList = Object.values(players).sort((a, b) => b.joinTime - a.joinTime);
+
+    // Dynamic Style for different group instances (Warn if viewing data for non-active group?)
+    // For now, if we match ANY group instance, we show it, but maybe highlight if it's not the selected one.
+
     return (
-        <GlassPanel style={{ height: '100%', padding: '1rem', display: 'flex', flexDirection: 'column' }}>
+        <GlassPanel style={{ height: '100%', padding: '0.75rem', display: 'flex', flexDirection: 'column' }}>
             {/* Header / Badges Row */}
-            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px', marginBottom: '8px', flex: '0 0 auto' }}>
-                <span style={{ fontSize: '0.65rem', color: 'var(--color-accent)', letterSpacing: '0.5px', fontWeight: 600 }}>CURRENT INSTANCE</span>
+            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '6px', marginBottom: '6px', flex: '0 0 auto' }}>
+                <span style={{ fontSize: '0.6rem', color: 'var(--color-accent)', letterSpacing: '0.5px', fontWeight: 600 }}>CURRENT INSTANCE</span>
                 <LiveBadge />
-                {groupInstance && (
-                    <span style={{ 
-                        fontSize: '0.6rem', 
-                        background: 'rgba(255,255,255,0.1)',
-                        border: '1px solid var(--color-primary)',
-                        color: 'var(--color-primary)', 
-                        padding: '2px 8px', 
-                        borderRadius: '12px', 
-                        fontWeight: 700,
-                        textTransform: 'uppercase',
-                        letterSpacing: '0.5px',
-                        boxShadow: '0 0 10px rgba(var(--color-primary-rgb), 0.2)',
-                        whiteSpace: 'nowrap',
-                        maxWidth: '100%',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis'
-                    }}>
-                        {groupInstance.group?.name || myGroups.find(g => g.id === groupInstance.ownerId)?.name || 'GROUP'} INSTANCE
-                    </span>
-                )}
+                <span style={{ 
+                    fontSize: '0.55rem', 
+                    background: isCurrentGroupInstance ? 'rgba(0, 255, 100, 0.1)' : 'rgba(255,255,255,0.1)',
+                    border: isCurrentGroupInstance ? '1px solid var(--color-success)' : '1px solid var(--color-primary)',
+                    color: isCurrentGroupInstance ? 'var(--color-success)' : 'var(--color-primary)', 
+                    padding: '2px 6px', 
+                    borderRadius: '10px', 
+                    fontWeight: 700,
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.5px',
+                    boxShadow: isCurrentGroupInstance ? '0 0 10px rgba(0,255,100, 0.2)' : 'none',
+                    whiteSpace: 'nowrap',
+                    maxWidth: '100%',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis'
+                }}>
+                    {groupInstance.group?.name || myGroups.find(g => g.id === groupInstance.ownerId)?.name || 'GROUP'} INSTANCE
+                </span>
             </div>
 
             {/* Content Row: World Info + Player Count */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem', marginBottom: '1rem', flex: '0 0 auto' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.5rem', marginBottom: '0.5rem', flex: '0 0 auto' }}>
                 <div style={{ flex: '1 1 auto', minWidth: 0, display: 'flex', flexDirection: 'column', gap: '2px' }}>
                      <div style={{ 
-                         fontSize: '1.2rem', 
+                         fontSize: '1rem', 
                          fontWeight: 'bold', 
                          color: 'white',
                          whiteSpace: 'nowrap',
@@ -78,7 +137,7 @@ export const InstanceMonitorWidget: React.FC = () => {
                          lineHeight: 1.2
                      }} title={displayWorldName}>{displayWorldName}</div>
                      <div style={{ 
-                         fontSize: '0.7rem', 
+                         fontSize: '0.6rem', 
                          color: 'rgba(255,255,255,0.4)', 
                          fontFamily: 'monospace',
                          whiteSpace: 'nowrap',
@@ -87,8 +146,8 @@ export const InstanceMonitorWidget: React.FC = () => {
                      }}>{currentWorldId}</div>
                 </div>
                 <div style={{ textAlign: 'right', flex: '0 0 auto', marginTop: '-4px' }}>
-                    <div style={{ fontSize: '2rem', fontWeight: 'bold', color: 'var(--color-primary)', lineHeight: 1 }}>{playerCount}</div>
-                    <div style={{ fontSize: '0.65rem', color: 'var(--color-text-dim)', fontWeight: 600 }}>PLAYERS</div>
+                    <div style={{ fontSize: '1.6rem', fontWeight: 'bold', color: 'var(--color-primary)', lineHeight: 1 }}>{playerCount}</div>
+                    <div style={{ fontSize: '0.6rem', color: 'var(--color-text-dim)', fontWeight: 600 }}>PLAYERS</div>
                 </div>
             </div>
 
@@ -97,23 +156,37 @@ export const InstanceMonitorWidget: React.FC = () => {
                  flex: 1, // Fill remaining space
                  overflowY: 'auto', 
                  background: 'rgba(0,0,0,0.2)', 
-                 borderRadius: '8px', 
-                 padding: '0.5rem',
+                 borderRadius: '6px', 
+                 padding: '0.4rem',
                  display: 'flex',
                  flexDirection: 'column',
                  gap: '2px',
                  minHeight: 0 // Crucial for flex scrolling
              }}>
                 {playerList.map(p => (
-                    <div key={p.displayName} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 8px', borderRadius: '4px', background: 'rgba(255,255,255,0.03)', fontSize: '0.9rem' }}>
-                        <span style={{ fontWeight: 500 }}>{p.displayName}</span>
-                        <span style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.4)' }}>
+                    <div key={p.displayName} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 6px', borderRadius: '4px', background: 'rgba(255,255,255,0.03)', fontSize: '0.8rem' }}>
+                        <span 
+                            style={{ 
+                                fontWeight: 500,
+                                cursor: p.userId ? 'pointer' : 'default',
+                                textDecoration: p.userId ? 'underline' : 'none',
+                                textDecorationColor: 'rgba(255,255,255,0.3)',
+                                textUnderlineOffset: '2px'
+                            }}
+                            onClick={() => p.userId && openProfile(p.userId)}
+                            title={p.userId ? 'View Profile' : undefined}
+                            onMouseEnter={(e) => { if(p.userId) e.currentTarget.style.color = 'var(--color-primary)'; }}
+                            onMouseLeave={(e) => { if(p.userId) e.currentTarget.style.color = 'inherit'; }}
+                        >
+                            {p.displayName}
+                        </span>
+                        <span style={{ fontSize: '0.65rem', color: 'rgba(255,255,255,0.4)' }}>
                              {new Date(p.joinTime).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', second: '2-digit'})}
                         </span>
                     </div>
                 ))}
                 {playerList.length === 0 && (
-                    <div style={{ textAlign: 'center', padding: '1rem', fontSize: '0.8rem', color: 'rgba(255,255,255,0.3)', marginTop: 'auto', marginBottom: 'auto' }}>
+                    <div style={{ textAlign: 'center', padding: '0.75rem', fontSize: '0.75rem', color: 'rgba(255,255,255,0.3)', marginTop: 'auto', marginBottom: 'auto' }}>
                         No players detected
                     </div>
                 )}

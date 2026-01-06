@@ -78,7 +78,7 @@ const AutoLoginLoadingScreen: React.FC = () => (
 
 function App() {
   const { isAuthenticated, autoLogin, status, logout } = useAuthStore();
-  const { selectedGroup, selectGroup } = useGroupStore();
+  const { selectedGroup, selectGroup, isRoamingMode } = useGroupStore();
   const [isCheckingAutoLogin, setIsCheckingAutoLogin] = useState(true);
   const [isStorageConfigured, setIsStorageConfigured] = useState<boolean | null>(null);
   const [currentView, setCurrentView] = useState<DockView>('main');
@@ -116,6 +116,12 @@ function App() {
 
   // Monitor Live Log state to toggle Live Mode UI
   useEffect(() => {
+    // Check roaming mode first
+    if (isRoamingMode) {
+      if (!isLiveMode) setIsLiveMode(true);
+      return;
+    }
+
     // 1. Initial check
     const checkStatus = async () => {
         if (!selectedGroup) {
@@ -146,7 +152,7 @@ function App() {
     return () => {
         unsubscribe();
     };
-  }, [selectedGroup]);
+  }, [selectedGroup, isRoamingMode, isLiveMode]);
 
   // Check storage configuration first
   useEffect(() => {
@@ -198,8 +204,24 @@ function App() {
     attemptAutoLogin();
   }, [autoLogin, isStorageConfigured]);
 
+  // Auto-switch to Live View when entering Roaming Mode
+  useEffect(() => {
+    if (isRoamingMode) {
+      if (currentView !== 'live') setCurrentView('live');
+    } else if (currentView === 'live' && !selectedGroup) {
+        // If we exited roaming mode and have no group, go back to main
+        setCurrentView('main');
+    }
+  }, [isRoamingMode, selectedGroup, currentView]);
+
   // Handle View Switching - memoized to prevent re-renders
   const handleViewChange = useCallback((view: DockView) => {
+    // Exceptions for Live view in Roaming Mode
+    if (view === 'live' && (isRoamingMode || selectedGroup)) {
+        setCurrentView('live');
+        return;
+    }
+
     if ((view === 'moderation' || view === 'audit' || view === 'database' || view === 'live') && !selectedGroup) {
       // If trying to access group features without a group, go to group selection
       selectGroup(null);
@@ -207,7 +229,7 @@ function App() {
       return;
     }
     setCurrentView(view);
-  }, [selectedGroup, selectGroup]);
+  }, [selectedGroup, selectGroup, isRoamingMode]);
 
   // Memoize content to prevent re-renders during transitions
   const content = useMemo(() => {

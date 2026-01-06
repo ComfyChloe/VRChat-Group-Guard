@@ -21,9 +21,18 @@ import { contextBridge, ipcRenderer } from 'electron';
      getMyGroups: () => ipcRenderer.invoke('groups:get-my-groups'),
      getGroupDetails: (groupId: string) => ipcRenderer.invoke('groups:get-details', { groupId }),
      getGroupMembers: (groupId: string, offset = 0, n = 100) => ipcRenderer.invoke('groups:get-members', { groupId, offset, n }),
+     searchGroupMembers: (groupId: string, query: string, n = 20) => ipcRenderer.invoke('groups:search-members', { groupId, query, n }),
      getGroupRequests: (groupId: string) => ipcRenderer.invoke('groups:get-requests', { groupId }),
+     respondToGroupRequest: (groupId: string, userId: string, action: 'accept' | 'deny') => ipcRenderer.invoke('groups:respond-request', { groupId, userId, action }),
      getGroupBans: (groupId: string) => ipcRenderer.invoke('groups:get-bans', { groupId }),
      getGroupInstances: (groupId: string) => ipcRenderer.invoke('groups:get-instances', { groupId }),
+
+     banUser: (groupId: string, userId: string) => ipcRenderer.invoke('groups:ban-user', { groupId, userId }),
+     
+     // Role Management
+     getGroupRoles: (groupId: string) => ipcRenderer.invoke('groups:get-roles', { groupId }),
+     addMemberRole: (groupId: string, userId: string, roleId: string) => ipcRenderer.invoke('groups:add-member-role', { groupId, userId, roleId }),
+     removeMemberRole: (groupId: string, userId: string, roleId: string) => ipcRenderer.invoke('groups:remove-member-role', { groupId, userId, roleId }),
      
      // Audit API
      getGroupAuditLogs: (groupId: string) => ipcRenderer.invoke('groups:get-audit-logs', { groupId }),
@@ -126,14 +135,16 @@ import { contextBridge, ipcRenderer } from 'electron';
          // NEW LIVE OPS API
          scanSector: (groupId: string) => ipcRenderer.invoke('instance:scan-sector', { groupId }),
          recruitUser: (groupId: string, userId: string) => ipcRenderer.invoke('instance:recruit-user', { groupId, userId }),
+         unbanUser: (groupId: string, userId: string) => ipcRenderer.invoke('instance:unban-user', { groupId, userId }),
          kickUser: (groupId: string, userId: string) => ipcRenderer.invoke('instance:kick-user', { groupId, userId }),
          // rallyForces: (groupId: string) => ipcRenderer.invoke('instance:rally-forces', { groupId }), // Deprecated but keeping for safety if needed
          getRallyTargets: (groupId: string) => ipcRenderer.invoke('instance:get-rally-targets', { groupId }),
          inviteToCurrent: (userId: string) => ipcRenderer.invoke('instance:invite-to-current', { userId }),
-         closeInstance: () => ipcRenderer.invoke('instance:close-instance'),
+         inviteSelf: (worldId: string, instanceId: string) => ipcRenderer.invoke('instance:invite-self', { worldId, instanceId }),
+         closeInstance: (worldId?: string, instanceId?: string) => ipcRenderer.invoke('instance:close-instance', { worldId, instanceId }),
          getInstanceInfo: () => ipcRenderer.invoke('instance:get-instance-info'),
-         onEntityUpdate: (callback: (entity: any) => void) => {
-             const handler = (_event: Electron.IpcRendererEvent, entity: any) => callback(entity);
+         onEntityUpdate: (callback: (entity: { id: string; displayName: string; rank: string; isGroupMember: boolean; status: string; avatarUrl?: string; lastUpdated: number }) => void) => {
+             const handler = (_event: Electron.IpcRendererEvent, entity: { id: string; displayName: string; rank: string; isGroupMember: boolean; status: string; avatarUrl?: string; lastUpdated: number }) => callback(entity);
              ipcRenderer.on('instance:entity-update', handler);
              return () => ipcRenderer.removeListener('instance:entity-update', handler);
          }
@@ -161,6 +172,17 @@ import { contextBridge, ipcRenderer } from 'electron';
          saveRule: (rule: unknown) => ipcRenderer.invoke('automod:save-rule', rule),
          deleteRule: (ruleId: number) => ipcRenderer.invoke('automod:delete-rule', ruleId),
          checkUser: (user: unknown) => ipcRenderer.invoke('automod:check-user', user),
+         getHistory: () => ipcRenderer.invoke('automod:get-history'),
+         clearHistory: () => ipcRenderer.invoke('automod:clear-history'),
+     },
+
+     // Generic IPC Renderer for event listening
+     ipcRenderer: {
+         // eslint-disable-next-line @typescript-eslint/no-explicit-any
+         on: (channel: string, callback: (event: any, ...args: any[]) => void) => {
+             ipcRenderer.on(channel, callback);
+             return () => ipcRenderer.removeListener(channel, callback);
+         }
      }
  });
 

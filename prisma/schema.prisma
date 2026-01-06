@@ -1,131 +1,48 @@
 generator client {
   provider = "prisma-client-js"
-  binaryTargets = ["native", "windows"]
 }
 
 datasource db {
   provider = "sqlite"
-  url      = "file:dev.db"
+  url      = env("DATABASE_URL")
 }
 
-// Represents a VRChat User (cached locally)
-model User {
-  id          String   @id // VRChat User ID (usr_...)
-  username    String?
-  displayName String?
-  userIcon    String?
-  bio         String?
-  notes       String?  // Local moderator notes
-  
-  moderationLogs   ModerationLog[] @relation("TargetUser")
-  actionsPerformed ModerationLog[] @relation("Moderator")
-  infractions      Infraction[]    @relation("InfractionTarget")
-  
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+model Session {
+  id          String     @id @default(cuid())
+  sessionId   String     @unique 
+  worldId     String
+  instanceId  String
+  worldName   String?
+  groupId     String?
+  location    String
+  startTime   DateTime
+  endTime     DateTime?
+  logs        LogEntry[]
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
 }
 
-// Represents a VRChat Group
-model Group {
-  id          String @id // grp_...
-  name        String
-  shortCode   String?
-  
-  auditLogs   AuditLog[]
+model LogEntry {
+  id               Int      @id @default(autoincrement())
+  sessionId        String
+  session          Session  @relation(fields: [sessionId], references: [sessionId], onDelete: Cascade)
+  type             String
+  timestamp        DateTime
+  actorDisplayName String?
+  actorUserId      String?
+  details          String   
+  createdAt        DateTime @default(now())
 }
 
-// Log of actions taken against a user
-model ModerationLog {
-  id          Int      @id @default(autoincrement())
-  targetId    String
-  moderatorId String
-  action      String   // KICK, BAN, MUTE, WARN
-  reason      String?
-  duration    Int?     // Seconds if applicable
-  
-  target      User     @relation("TargetUser", fields: [targetId], references: [id])
-  moderator   User     @relation("Moderator", fields: [moderatorId], references: [id])
-  
-  createdAt   DateTime @default(now())
-}
-
-// Generic log for system activity
-model AuditLog {
-  id        Int      @id @default(autoincrement())
-  entityId  String?  // ID of the object affected
-  actorId   String?  // Who did it?
-  action    String
-  details   String   // JSON string of changes
-  
-  group     Group?   @relation(fields: [entityId], references: [id])
-  
-  timestamp DateTime @default(now())
-}
-
-// Application Settings (Key-Value)
-model AppSetting {
-  key   String @id
-  value String
-}
-
-// ============================================
-// INSTANCE TRACKING
-// ============================================
-
-model InstanceSession {
-  id              String   @id @default(uuid())
-  worldId         String
-  instanceId      String   // Full distinct instance ID string
-  worldName       String?
-  groupName       String?  // If detected
-  
-  startTime       DateTime @default(now())
-  endTime         DateTime?
-  
-  events          InstanceEvent[]
-}
-
-model InstanceEvent {
-  id              Int      @id @default(autoincrement())
-  sessionId       String
-  timestamp       DateTime @default(now())
-  
-  type            String   // JOIN, LEAVE, AVATAR_CHANGE, LOCATION_START
-  actorDisplayName String
-  actorUserId     String?
-  
-  details         String?  // JSON or text details (e.g. avatar ID)
-  
-  session         InstanceSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-}
-
-// ============================================
-// AUTO MODERATION & INFRACTIONS
-// ============================================
-
-model Infraction {
-  id          Int      @id @default(autoincrement())
-  targetId    String   // User receiving the infraction
-  issuerId    String   // User/System issuing it
-  type        String   // WARNING, NOTE, BAN_EVASION
-  reason      String?
-  createdAt   DateTime @default(now())
-
-  target      User     @relation("InfractionTarget", fields: [targetId], references: [id])
-}
-
-model AutoModRule {
-  id          Int      @id @default(autoincrement())
-  name        String
-  enabled     Boolean  @default(true)
-  
-  // Rule Logic
-  type        String   // AGE_CHECK, TRUST_CHECK, KEYWORD_BLOCK, WHITELIST_CHECK, BAN_EVASION_CHECK
-  config      String   // JSON string storing specific config
-  
-  // Action to take if rule matches
-  actionType  String   // REJECT, AUTO_BLOCK, NOTIFY_ONLY
-  
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+model AutoModLog {
+  id               String   @id @default(cuid())
+  timestamp        DateTime
+  user             String
+  userId           String
+  groupId          String
+  action           String
+  reason           String
+  module           String
+  details          String?
+  createdAt        DateTime @default(now())
 }

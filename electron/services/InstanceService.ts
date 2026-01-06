@@ -1,5 +1,6 @@
 import { ipcMain, BrowserWindow } from 'electron';
 import log from 'electron-log';
+const logger = log.scope('InstanceService');
 import { getVRChatClient, getCurrentUserId } from './AuthService';
 import { instanceLoggerService } from './InstanceLoggerService';
 import { logWatcherService } from './LogWatcherService';
@@ -19,6 +20,36 @@ export interface LiveEntity {
     lastUpdated: number;
 }
 
+// Type for VRChat API error responses
+interface VRChatApiError {
+    message?: string;
+    response?: {
+        status?: number;
+        data?: {
+            error?: {
+                message?: string;
+            };
+        };
+    };
+}
+
+// Type for group member API response
+interface GroupMemberApiResponse {
+    id?: string;
+    displayName?: string;
+    user?: {
+        id?: string;
+        displayName?: string;
+        thumbnailUrl?: string;
+    };
+}
+
+// Type for session event
+interface SessionEvent {
+    type: string;
+    actorUserId?: string;
+}
+
 // ============================================
 // CACHE
 // ============================================
@@ -32,7 +63,7 @@ const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 const fetchQueue: string[] = [];
 let isFetching = false;
 
-async function processFetchQueue(groupId: string) {
+async function processFetchQueue(groupId?: string) {
     if (isFetching || fetchQueue.length === 0) return;
     isFetching = true;
 
@@ -47,13 +78,13 @@ async function processFetchQueue(groupId: string) {
             const userId = fetchQueue.shift();
             if (!userId) continue;
 
-            const cacheKey = `${groupId}:${userId}`;
+            const cacheKey = groupId ? `${groupId}:${userId}` : `roam:${userId}`;
             // Double check cache before hitting API
             if (entityCache.has(cacheKey) && entityCache.get(cacheKey)!.rank !== 'Unknown') {
                  continue; 
             }
 
-            log.info(`[InstanceService] Fetching details for ${userId}...`);
+            logger.info(`[InstanceService] Fetching details for ${userId} (Context: ${groupId || 'Roaming'})...`);
 
             try {
                 // 1. Get User Details (Rank, Avatar)
@@ -61,15 +92,17 @@ async function processFetchQueue(groupId: string) {
                 const userRes = await (client as any).getUser({ path: { userId } });
                 const userData = userRes.data;
 
-                // 2. Check Group Membership
+                // 2. Check Group Membership (Only if groupId provided)
                 let isMember = false;
-                try {
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                    await (client as any).getGroupMember({ path: { groupId, userId } });
-                    isMember = true;
-                } catch {
-                    // 404 = not a member
-                    isMember = false;
+                if (groupId) {
+                    try {
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        await (client as any).getGroupMember({ path: { groupId, userId } });
+                        isMember = true;
+                    } catch {
+                        // 404 = not a member
+                        isMember = false;
+                    }
                 }
 
                 // Update Cache
@@ -106,14 +139,34 @@ async function processFetchQueue(groupId: string) {
                 }
 
             } catch (err) {
-                log.warn(`[InstanceService] Failed to fetch data for ${userId}`, err);
+                logger.warn(`[InstanceService] Failed to fetch data for ${userId}`, err);
+            }
+            
+            // PERSIST DETAILS TO DISK (SESSION DB)
+            // We do this here to ensure 'rank' and 'isGroupMember' are saved to history.
+            try {
+                 const { instanceLoggerService } = require('./InstanceLoggerService');
+                 const cacheKey = groupId ? `${groupId}:${userId}` : `roam:${userId}`;
+                 const entity = entityCache.get(cacheKey);
+                 
+                 if (entity) {
+                     instanceLoggerService.logEnrichedEvent('PLAYER_DETAILS', {
+                         userId: entity.id,
+                         displayName: entity.displayName,
+                         rank: entity.rank,
+                         isGroupMember: entity.isGroupMember,
+                         timestamp: new Date().toISOString()
+                     });
+                 }
+            } catch (e) {
+                logger.error('[InstanceService] Failed to persist enriched details', e);
             }
 
             // Respect rate limits!
             await sleep(2000); 
         }
     } catch (e) {
-        log.error('[InstanceService] Queue processor fatal error', e);
+        logger.error('[InstanceService] Queue processor fatal error', e);
     } finally {
         isFetching = false;
         // Check if more came in
@@ -125,7 +178,7 @@ async function processFetchQueue(groupId: string) {
 export function setupInstanceHandlers() {
     
     // SCAN SECTOR
-    ipcMain.handle('instance:scan-sector', async (_event, { groupId }) => {
+    ipcMain.handle('instance:scan-sector', async (_event, { groupId }: { groupId?: string }) => {
         try {
             // 1. Get Log Players - Use public API now
             // logWatcherService is imported above
@@ -149,7 +202,7 @@ export function setupInstanceHandlers() {
                     continue;
                 }
 
-                const cacheKey = `${groupId}:${p.userId}`;
+                const cacheKey = groupId ? `${groupId}:${p.userId}` : `roam:${p.userId}`;
                 if (entityCache.has(cacheKey)) {
                     results.push(entityCache.get(cacheKey)!);
                 } else {
@@ -177,7 +230,7 @@ export function setupInstanceHandlers() {
             return results;
 
         } catch (error) {
-            log.error('Failed to scan sector:', error);
+            logger.error('Failed to scan sector:', error);
             return [];
         }
     });
@@ -188,7 +241,7 @@ export function setupInstanceHandlers() {
         if (!client) throw new Error("Not authenticated");
 
         try {
-           log.info(`[InstanceService] Inviting ${userId} to group ${groupId}...`);
+           logger.info(`[InstanceService] Inviting ${userId} to group ${groupId}...`);
            
            // Correct API method for 'Invite User to Group' is createGroupInvite (POST /groups/:groupId/invites)
            // Requires 'userId' in the body.
@@ -198,48 +251,90 @@ export function setupInstanceHandlers() {
                body: { userId }
            });
            
-           log.info(`[InstanceService] Recruitment result for ${userId}:`, result.data || result);
+           logger.info(`[InstanceService] createGroupInvite Raw Result for ${userId}:`, JSON.stringify(result, null, 2));
+
+           // Check for SDK error pattern
+           if (result.error) {
+               const errorMsg = result.error?.message || JSON.stringify(result.error);
+               logger.error(`[InstanceService] API error inviting ${userId}: ${errorMsg}`);
+               return { success: false, error: errorMsg };
+           }
+           
+           logger.info(`[InstanceService] Recruitment success for ${userId}`);
            return { success: true };
-        } catch (e: any) { // eslint-disable-line @typescript-eslint/no-explicit-any
+        } catch (e: unknown) {
+            const err = e as VRChatApiError;
+            logger.error(`[InstanceService] Exception inviting ${userId}:`, e);
+            
             // Check for rate limit
-            if (e.response && e.response.status === 429) {
-                 log.warn(`[InstanceService] Rate limited (429) recruiting ${userId}`);
+            if (err.response && err.response.status === 429) {
+                 logger.warn(`[InstanceService] Rate limited (429) recruiting ${userId}`);
                  return { success: false, error: 'RATE_LIMIT' }; // Frontend can handle this specifically
             }
 
             // If user is already in group or invited, API throws.
-            const msg = e.response?.data?.error?.message || e.message;
-            log.warn(`[InstanceService] Failed to recruit ${userId}: ${msg}`);
+            const msg = err.response?.data?.error?.message || err.message;
+            logger.warn(`[InstanceService] Failed to recruit ${userId}: ${msg}`);
             return { success: false, error: msg };
         }
     });
-    // KICK (Ban form Group)
+    
+    // UNBAN (Unban User from Group)
+    ipcMain.handle('instance:unban-user', async (_event, { groupId, userId }) => {
+        const client = getVRChatClient();
+        if (!client) throw new Error("Not authenticated");
+
+        try {
+           logger.info(`[InstanceService] Unbanning ${userId} from group ${groupId}...`);
+           
+           // API: DELETE /groups/{groupId}/bans/{userId}
+           // eslint-disable-next-line @typescript-eslint/no-explicit-any
+           const result = await (client as any).unbanGroupMember({ 
+               path: { groupId, userId }
+           });
+           
+           // Check for SDK error pattern
+           if (result.error) {
+               const errorMsg = result.error?.message || JSON.stringify(result.error);
+               logger.error(`[InstanceService] API error unbanning ${userId}: ${errorMsg}`);
+               return { success: false, error: errorMsg };
+           }
+           
+           logger.info(`[InstanceService] Unban successful for ${userId}`);
+           return { success: true };
+        } catch (e: unknown) {
+            const err = e as VRChatApiError;
+            const msg = err.response?.data?.error?.message || err.message;
+            logger.warn(`[InstanceService] Failed to unban ${userId}: ${msg}`);
+            return { success: false, error: msg };
+        }
+    });
+
+    // KICK (Ban from Group)
     ipcMain.handle('instance:kick-user', async (_event, { groupId, userId }) => {
         const client = getVRChatClient();
         if (!client) throw new Error("Not authenticated");
 
         try {
-           log.info(`[InstanceService] Kicking (Banning) ${userId} from group ${groupId}`);
+           logger.info(`[InstanceService] Kicking (Banning) ${userId} from group ${groupId}`);
            // Ban user from group (effectively kicks them from group instance)
-           // standard ban duration? VRChat requires duration? 
-           // usually 'hours' etc. We'll default to 1 hour for a "Kick".
-           // API signature: banGroupMember(groupId, userId, { banType: '...'}) 
-           // Actually SDK might look like: client.banGroupMember({ path: { groupId, userId }, body: { ... } })
-           
-           // We'll use a short ban (1 hour) to simulate a "Kick"
            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-           await (client as any).banGroupMember({ 
+           const result = await (client as any).banGroupMember({ 
                path: { groupId, userId }
            });
            
-           // We should also "unban" them immediately if it's just a kick? 
-           // But VRChat kicks are bans. Let's just leave it as a ban for now or user can unban.
-           // Or maybe we can just remove them? 'kick' isn't really a thing.
+           // Check for SDK error pattern
+           if (result.error) {
+               const errorMsg = result.error?.message || JSON.stringify(result.error);
+               logger.error(`[InstanceService] API error kicking ${userId}: ${errorMsg}`);
+               return { success: false, error: errorMsg };
+           }
 
            return { success: true };
-        } catch (e: any) { // eslint-disable-line @typescript-eslint/no-explicit-any
-            log.error(`[InstanceService] Failed to kick ${userId}`, e);
-            return { success: false, error: e.message };
+        } catch (e: unknown) {
+            const err = e as VRChatApiError;
+            logger.error(`[InstanceService] Failed to kick ${userId}`, e);
+            return { success: false, error: err.message };
         }
     });
 
@@ -265,21 +360,17 @@ export function setupInstanceHandlers() {
             // Map to frontend friendly format
             // Map to frontend friendly format
             const targets = members
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                .map((m: any) => ({
+                .map((m: GroupMemberApiResponse) => ({
                     id: m.user?.id,
                     displayName: m.user?.displayName,
                     thumbnailUrl: m.user?.thumbnailUrl
                 }))
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                .filter((t: any) => {
-                     // 1. Exclude self
-                     if (!t.id || t.id === currentUserId) return false;
+                .filter((t: { id?: string; displayName?: string }) => {
+                     // 1. Allow self (User requested to receive notification/invite too)
+                     if (!t.id) return false;
+                     if (t.id === currentUserId) return true;
 
                      // 2. Exclude users already here (from LogWatcher)
-                     // Note: logWatcher players might not have ID yet if they haven't spoken/joined recently enough,
-                     // but usually they do if we are tracking them.
-                     // We also check by DisplayName as a fallback if ID is missing (risky but better than spamming)
                      const players = logWatcherService.getPlayers();
                      const isHere = players.some(p => 
                         (p.userId && p.userId === t.id) || 
@@ -290,9 +381,10 @@ export function setupInstanceHandlers() {
                 });
 
             return { success: true, targets };
-        } catch (e: any) { // eslint-disable-line @typescript-eslint/no-explicit-any
-             log.error(`[InstanceService] Failed to fetch rally targets`, e);
-             return { success: false, error: e.message };
+        } catch (e: unknown) {
+             const err = e as VRChatApiError;
+             logger.error(`[InstanceService] Failed to fetch rally targets`, e);
+             return { success: false, error: err.message };
         }
     });
 
@@ -319,12 +411,13 @@ export function setupInstanceHandlers() {
              });
              
              return { success: true };
-         } catch (e: any) { // eslint-disable-line @typescript-eslint/no-explicit-any
+         } catch (e: unknown) {
+             const err = e as VRChatApiError;
              // Rate Limit Check
-             if (e.response && e.response.status === 429) {
+             if (err.response && err.response.status === 429) {
                  return { success: false, error: 'RATE_LIMIT' };
              }
-             const msg = e.response?.data?.error?.message || e.message;
+             const msg = err.response?.data?.error?.message || err.message;
              return { success: false, error: msg };
          }
     });
@@ -344,7 +437,7 @@ export function setupInstanceHandlers() {
              }
              
              const currentLocation = `${currentWorldId}:${currentInstanceId}`;
-             log.info(`[InstanceService] Rally from session ${filename} to ${currentLocation}`);
+             logger.info(`[InstanceService] Rally from session ${filename} to ${currentLocation}`);
              
              // 2. Get session events
              const events = instanceLoggerService.getSessionEvents(filename);
@@ -354,8 +447,7 @@ export function setupInstanceHandlers() {
              
              // 3. Extract unique user IDs from PLAYER_JOIN events
              const userIds = new Set<string>();
-             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-             events.forEach((e: any) => {
+             (events as SessionEvent[]).forEach((e) => {
                  if ((e.type === 'PLAYER_JOIN' || e.type === 'JOIN') && e.actorUserId && e.actorUserId.startsWith('usr_')) {
                      userIds.add(e.actorUserId);
                  }
@@ -378,7 +470,7 @@ export function setupInstanceHandlers() {
                  return { success: false, error: "All users from that session are already here or unavailable" };
              }
              
-             log.info(`[InstanceService] Inviting ${targetsToInvite.length} users from previous session`);
+             logger.info(`[InstanceService] Inviting ${targetsToInvite.length} users from previous session`);
              
              // Helper to emit progress to all windows
              const emitProgress = (data: { sent: number; failed: number; total: number; current?: string; done?: boolean }) => {
@@ -400,7 +492,7 @@ export function setupInstanceHandlers() {
              
              for (const userId of targetsToInvite) {
                  try {
-                     log.info(`[InstanceService] Sending invite to ${userId}...`);
+                     logger.info(`[InstanceService] Sending invite to ${userId}...`);
                      
                      // eslint-disable-next-line @typescript-eslint/no-explicit-any
                      await (client as any).inviteUser({ 
@@ -408,22 +500,23 @@ export function setupInstanceHandlers() {
                          body: { instanceId: currentLocation }
                      });
                      successCount++;
-                     log.info(`[InstanceService] ✓ Invite sent to ${userId} (${successCount}/${total})`);
+                     logger.info(`[InstanceService] ✓ Invite sent to ${userId} (${successCount}/${total})`);
                      
                      // Emit progress
                      emitProgress({ sent: successCount, failed: failCount, total, current: userId });
                      
                      // Small delay between invites to avoid rate limiting
                      await sleep(350);
-                 } catch (inviteErr: any) { // eslint-disable-line @typescript-eslint/no-explicit-any
+                 } catch (inviteErr: unknown) {
+                     const err = inviteErr as VRChatApiError;
                      failCount++;
-                     const errMsg = inviteErr.response?.data?.error?.message || inviteErr.message;
-                     log.warn(`[InstanceService] ✗ Failed to invite ${userId}: ${errMsg}`);
+                     const errMsg = err.response?.data?.error?.message || err.message;
+                     logger.warn(`[InstanceService] ✗ Failed to invite ${userId}: ${errMsg}`);
                      
                      // Emit progress
                      emitProgress({ sent: successCount, failed: failCount, total });
                      
-                     if (inviteErr.response?.status === 429) {
+                     if (err.response?.status === 429) {
                          errors.push(`Rate limited after ${successCount} invites`);
                          break; // Stop on rate limit
                      }
@@ -442,31 +535,33 @@ export function setupInstanceHandlers() {
                  errors: errors.length > 0 ? errors : undefined
              };
              
-         } catch (e: any) { // eslint-disable-line @typescript-eslint/no-explicit-any
-             log.error(`[InstanceService] Rally from session failed`, e);
-             return { success: false, error: e.message };
+         } catch (e: unknown) {
+             const err = e as VRChatApiError;
+             logger.error(`[InstanceService] Rally from session failed`, e);
+             return { success: false, error: err.message };
          }
     });
     
     // CLOSE INSTANCE - Using SDK closeInstance method
-    ipcMain.handle('instance:close-instance', async () => {
+    ipcMain.handle('instance:close-instance', async (_event, args?: { worldId?: string; instanceId?: string }) => {
          const client = getVRChatClient();
          if (!client) throw new Error("Not authenticated");
 
          try {
-             // Resolve current instance
-             const worldId = instanceLoggerService.getCurrentWorldId();
-             const instanceId = instanceLoggerService.getCurrentInstanceId();
+             // Resolve instance to close: provided args or current
+             let worldId = args?.worldId;
+             let instanceId = args?.instanceId;
+
+             if (!worldId || !instanceId) {
+                 worldId = instanceLoggerService.getCurrentWorldId();
+                 instanceId = instanceLoggerService.getCurrentInstanceId();
+             }
              
              if (!worldId || !instanceId) {
-                 return { success: false, error: "No active instance to close" };
+                 return { success: false, error: "No active instance to close and none specified" };
              }
 
-             log.warn(`[InstanceService] Closing instance - worldId: ${worldId}, instanceId: ${instanceId}`);
-             
-             // Use SDK closeInstance method with correct structure
-             // SDK type: CloseInstance = { path: { worldId, instanceId }, query?: { hardClose?, closedAt? } }
-             // URL template: '/instances/{worldId}:{instanceId}'
+             logger.warn(`[InstanceService] Closing instance - worldId: ${worldId}, instanceId: ${instanceId}`);
              
              // eslint-disable-next-line @typescript-eslint/no-explicit-any
              const response = await (client as any).closeInstance({ 
@@ -477,29 +572,50 @@ export function setupInstanceHandlers() {
              // Safe stringify helper for BigInt
              const safeStringify = (obj: unknown) => JSON.stringify(obj, (_k, v) => typeof v === 'bigint' ? v.toString() : v, 2);
              
-             log.info(`[InstanceService] closeInstance raw response:`, safeStringify(response));
+             logger.info(`[InstanceService] closeInstance raw response:`, safeStringify(response));
              
              // Check for SDK error pattern
              if (response?.error) {
                  const errorMsg = response.error?.message || safeStringify(response.error);
-                 log.error(`[InstanceService] API returned error:`, errorMsg);
+                 logger.error(`[InstanceService] API returned error:`, errorMsg);
                  return { success: false, error: errorMsg };
              }
              
-             // Success - response.data should contain the instance info
-             log.info(`[InstanceService] Instance closed successfully. Data:`, safeStringify(response?.data));
+             logger.info(`[InstanceService] Instance closed successfully.`);
              return { success: true };
              
-         } catch (e: any) { // eslint-disable-line @typescript-eslint/no-explicit-any
-             log.error(`[InstanceService] Exception closing instance:`, e);
-             log.error(`[InstanceService] Error details:`, {
-                 message: e.message,
-                 name: e.name,
-                 stack: e.stack?.split('\n').slice(0, 5).join('\n')
-             });
-             const msg = e.response?.data?.error?.message || e.message || 'Unknown error';
+         } catch (e: unknown) {
+             const err = e as VRChatApiError & { name?: string; stack?: string };
+             logger.error(`[InstanceService] Exception closing instance:`, e);
+             const msg = err.response?.data?.error?.message || err.message || 'Unknown error';
              return { success: false, error: msg };
          }
+    });
+
+    // INVITE SELF (Join Instance)
+    ipcMain.handle('instance:invite-self', async (_event, { worldId, instanceId }: { worldId: string, instanceId: string }) => {
+        const client = getVRChatClient();
+        if (!client) throw new Error("Not authenticated");
+
+        try {
+            logger.info(`[InstanceService] Inviting self to ${worldId}:${instanceId}`);
+            
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const result = await (client as any).inviteMyselfTo({ 
+                path: { worldId, instanceId }
+            });
+
+            if (result.error) {
+                const errorMsg = result.error?.message || JSON.stringify(result.error);
+                return { success: false, error: errorMsg };
+            }
+
+            return { success: true };
+        } catch (e: unknown) {
+             const err = e as VRChatApiError;
+             const msg = err.response?.data?.error?.message || err.message;
+             return { success: false, error: msg };
+        }
     });
 
     // GET INSTANCE INFO (World Name, Image)

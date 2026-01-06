@@ -1,11 +1,18 @@
 import Store from 'electron-store';
-import { ipcMain } from 'electron';
+import { ipcMain, app } from 'electron';
+import fs from 'fs';
+import path from 'path';
 import log from 'electron-log';
+import { getVRChatClient } from './AuthService';
+import { databaseService } from './DatabaseService';
+import { instanceLoggerService } from './InstanceLoggerService';
+import { logWatcherService } from './LogWatcherService';
+
+const logger = log.scope('AutoModService');
 
 // Simplified Types
 export type AutoModActionType = 'REJECT' | 'AUTO_BLOCK' | 'NOTIFY_ONLY';
-// We'll define new rule types as we build them
-export type AutoModRuleType = string; 
+export type AutoModRuleType = 'AGE_VERIFICATION' | string;
 
 export interface AutoModRule {
     id: number;
@@ -29,15 +36,51 @@ const store = new Store<AutoModStoreSchema>({
     }
 });
 
-// Basic check function - currently does nothing as we are resetting
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-export const checkJoinRequest = (_user: unknown): { action: AutoModActionType | 'ALLOW'; reason?: string; ruleName?: string } => {
-    return { action: 'ALLOW' };
+
+
+// The core AutoMod logic
+let autoModInterval: NodeJS.Timeout | null = null;
+const CHECK_INTERVAL = 60 * 1000; // Check every minute
+
+// Track processed requests to prevent duplicates within a session
+const processedRequests = new Set<string>();
+const PROCESSED_CACHE_MAX_SIZE = 1000;
+
+// Clear old entries if cache gets too large
+const pruneProcessedCache = () => {
+    if (processedRequests.size > PROCESSED_CACHE_MAX_SIZE) {
+        const entries = Array.from(processedRequests);
+        entries.slice(0, PROCESSED_CACHE_MAX_SIZE / 2).forEach(e => processedRequests.delete(e));
+    }
 };
 
-export const setupAutoModHandlers = () => {
-    log.info('[AutoMod] Initializing handlers (Reset State)...');
+// Persist AutoMod actions to database file
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const persistAction = async (logEntry: any) => {
+    try {
+        await databaseService.createAutoModLog({
+            timestamp: new Date(logEntry.timestamp),
+            user: logEntry.user,
+            userId: logEntry.userId,
+            groupId: logEntry.groupId,
+            action: logEntry.action,
+            reason: logEntry.reason,
+            module: logEntry.module,
+            details: logEntry.details
+        });
+        logger.info('Persisted AutoMod action to database');
+    } catch (error) {
+        logger.error('Failed to persist AutoMod action', error);
+         // Fallback?
+    }
+};
 
+// ... (rest of the file until setupAutoModHandlers)
+
+export const setupAutoModHandlers = () => {
+    logger.info('Initializing AutoMod handlers...');
+
+    // Handlers
     ipcMain.handle('automod:get-rules', () => {
         return store.get('rules');
     });
@@ -67,7 +110,183 @@ export const setupAutoModHandlers = () => {
         return true;
     });
 
-    ipcMain.handle('automod:check-user', (_e, user: unknown) => {
-        return checkJoinRequest(user);
+    // History Handlers
+    ipcMain.handle('automod:get-history', async () => {
+        try {
+            return await databaseService.getAutoModLogs();
+        } catch (error) {
+            logger.error('Failed to get AutoMod history', error);
+            return [];
+        }
     });
+
+    ipcMain.handle('automod:clear-history', async () => {
+        try {
+            await databaseService.clearAutoModLogs();
+            // Also clear file if exists?
+            const dbPath = path.join(app.getPath('userData'), 'automod_history.jsonl');
+            if (fs.existsSync(dbPath)) {
+                fs.unlinkSync(dbPath);
+            }
+            // Also clear the processed cache
+            processedRequests.clear();
+            return true;
+        } catch (error) {
+            logger.error('Failed to clear AutoMod history', error);
+            return false;
+        }
+    });
+
+
+
+    // Helper to extract Group ID from current location
+    const getCurrentGroupId = (): string | null => {
+        // We can get this from LogWatcher or InstanceLogger
+        // LogWatcher state is private but we can access via formatted getters if we had them.
+        // But we DO have logWatcherService.state which is private.
+        // However, LogWatcher emits 'location' event.
+        // Better: instanceLoggerService tracks this too?
+        // Let's use the messy way or check if LogWatcherService exports a getter for location.
+        // It does not export location getter, but we can rely on what we have.
+        // Actually, let's assume valid group instance if we can find 'group(grp_...)' in instanceId
+        const instanceId = instanceLoggerService.getCurrentInstanceId();
+        if (!instanceId) return null;
+        
+        const match = instanceId.match(/group\((grp_[a-zA-Z0-9-]+)\)/);
+        return match ? match[1] : null;
+    };
+
+    const executeAction = async (player: { userId: string; displayName: string }, rule: AutoModRule, groupId: string) => {
+        const client = getVRChatClient();
+        if (!client) return;
+
+        logger.info(`[AutoMod] Executing ${rule.actionType} on ${player.displayName} (${player.userId}) for rule ${rule.name}`);
+
+        // Persist the violation
+        await persistAction({
+            timestamp: new Date(),
+            user: player.displayName,
+            userId: player.userId,
+            groupId: groupId,
+            action: rule.actionType,
+            reason: `Violated Rule: ${rule.name}`,
+            module: 'AutoMod',
+            details: { ruleId: rule.id, config: rule.config }
+        });
+
+        if (rule.actionType === 'REJECT' || rule.actionType === 'AUTO_BLOCK') {
+            try {
+                // Ban from Group (Kick)
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                await (client as any).banGroupMember({
+                    path: { groupId },
+                    body: { userId: player.userId }
+                });
+                logger.info(`[AutoMod] Banned ${player.displayName} from group ${groupId}`);
+            } catch (error) {
+                logger.error(`[AutoMod] Failed to ban ${player.displayName}`, error);
+            }
+        }
+        // NOTIFY_ONLY is handled by just logging (and potentially frontend events via log database)
+    };
+
+    const checkPlayer = async (player: { userId: string; displayName: string }, groupId: string) => {
+        // Prevent duplicate checks
+        const key = `${groupId}:${player.userId}`;
+        if (processedRequests.has(key)) return;
+
+        const rules = store.get('rules').filter(r => r.enabled) as AutoModRule[];
+        if (rules.length === 0) return;
+
+        logger.info(`[AutoMod] Checking ${player.displayName} against ${rules.length} rules...`);
+
+        // Fetch detailed user info if needed for rules (Trust Rank, etc)
+        // For simple name checks we don't need API
+        let fullUser = null;
+        
+        for (const rule of rules) {
+            let matches = false;
+
+            if (rule.type === 'KEYWORD_BLOCK') {
+                if (rule.config && player.displayName.toLowerCase().includes(rule.config.toLowerCase())) {
+                    matches = true;
+                }
+            } else if (rule.type === 'AGE_CHECK' || rule.type === 'TRUST_CHECK') {
+                // We need full user profile
+                if (!fullUser) {
+                    try {
+                         const client = getVRChatClient();
+                         if (client) {
+                             // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                             const res = await (client as any).getUser({ path: { userId: player.userId } });
+                             fullUser = res.data;
+                         }
+                    } catch (e) {
+                        logger.warn(`[AutoMod] Failed to fetch user details for ${player.displayName}`, e);
+                    }
+                }
+
+                if (fullUser) {
+                     if (rule.type === 'TRUST_CHECK') {
+                         // config might be "known", "trusted" etc.
+                         // Implementation depends on tags
+                         // const tags = fullUser.tags || [];
+                         // Simple logic: if config is 'user' and they are 'visitor', block?
+                         // For now, placeholder or simple check
+                         logger.debug('[AutoMod] Trust Check logic pending refinement');
+                     }
+                }
+            }
+
+            if (matches) {
+                await executeAction(player, rule, groupId);
+                processedRequests.add(key);
+                break; // Stop after first violation
+            }
+        }
+        
+        // Mark as checked to prevent loop spam (API rate limits)
+        processedRequests.add(key);
+    };
+
+    const runAutoModCycle = async () => {
+        try {
+            const client = getVRChatClient();
+            if (!client) return;
+
+            pruneProcessedCache();
+
+            const groupId = getCurrentGroupId();
+            if (!groupId) {
+                // Not in a group instance, nothing to guard
+                return;
+            }
+
+            const players = logWatcherService.getPlayers();
+            
+            for (const p of players) {
+                if (!p.userId) continue;
+                await checkPlayer({ userId: p.userId, displayName: p.displayName }, groupId);
+            }
+
+        } catch (error) {
+            logger.error('AutoMod Loop Error:', error);
+        }
+    };
+
+    // Listen for realtime joins
+    logWatcherService.on('player-joined', async (event: { displayName: string; userId?: string }) => {
+        if (!event.userId) return;
+        const groupId = getCurrentGroupId();
+        if (groupId) {
+             await checkPlayer({ userId: event.userId, displayName: event.displayName }, groupId);
+        }
+    });
+
+    // Start Loop (Backup)
+    if (!autoModInterval) {
+        // Run once immediately (delayed slightly to allow auth) then interval
+        setTimeout(runAutoModCycle, 5000);
+        autoModInterval = setInterval(runAutoModCycle, CHECK_INTERVAL);
+    }
 };

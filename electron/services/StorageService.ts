@@ -2,6 +2,7 @@ import { app, dialog, BrowserWindow } from 'electron';
 import fs from 'fs';
 import path from 'path';
 import log from 'electron-log';
+const logger = log.scope('StorageService');
 
 class StorageService {
   private configPath: string;
@@ -18,16 +19,16 @@ class StorageService {
         const config = JSON.parse(fs.readFileSync(this.configPath, 'utf-8'));
         if (config.dataDir && fs.existsSync(config.dataDir)) {
           this.dataDir = config.dataDir;
-          log.info(`[StorageService] Loaded data directory: ${this.dataDir}`);
+          logger.info(`Loaded data directory: ${this.dataDir}`);
         } else {
-            log.warn(`[StorageService] Configured data dir not found: ${config.dataDir}`);
+            logger.warn(`Configured data dir not found: ${config.dataDir}`);
             this.dataDir = null; // Force re-setup
         }
       } else {
-          log.info('[StorageService] No storage config found. Waiting for user setup.');
+          logger.info('No storage config found. Waiting for user setup.');
       }
     } catch (error) {
-      log.error('[StorageService] Failed to initialize:', error);
+      logger.error('Failed to initialize:', error);
     }
   }
 
@@ -66,7 +67,7 @@ class StorageService {
       const config = { dataDir: dirPath };
       fs.writeFileSync(this.configPath, JSON.stringify(config));
       this.dataDir = dirPath;
-      log.info(`[StorageService] Storage location set to: ${dirPath}`);
+      logger.info(`Storage location set to: ${dirPath}`);
       return true;
   }
 }

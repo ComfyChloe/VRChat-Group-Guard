@@ -11,7 +11,7 @@ interface Props {
 }
 
 export const RequestsListDialog: React.FC<Props> = ({ isOpen, onClose }) => {
-    const { requests, selectedGroup, fetchGroupRequests, isRequestsLoading } = useGroupStore();
+    const { requests, selectedGroup, fetchGroupRequests, isRequestsLoading, respondToRequest } = useGroupStore();
     const { openProfile } = useUserProfileStore();
 
     useEffect(() => {
@@ -62,8 +62,15 @@ export const RequestsListDialog: React.FC<Props> = ({ isOpen, onClose }) => {
                                 </div>
                             </div>
                             <div style={{ display: 'flex', gap: '8px' }}>
-                                <NeonButton variant="ghost" style={{ color: '#ef4444' }}>Deny</NeonButton>
-                                <NeonButton variant="primary">Accept</NeonButton>
+                                <NeonButton 
+                                    variant="ghost" 
+                                    style={{ color: '#ef4444' }}
+                                    onClick={() => selectedGroup && respondToRequest(selectedGroup.id, req.user.id, 'deny')}
+                                >Deny</NeonButton>
+                                <NeonButton 
+                                    variant="primary"
+                                    onClick={() => selectedGroup && respondToRequest(selectedGroup.id, req.user.id, 'accept')}
+                                >Accept</NeonButton>
                             </div>
                         </GlassPanel>
                     ))

@@ -83,7 +83,7 @@ export const NeonDock: React.FC<NeonDockProps> = memo(({
 
         {/* Group-specific items */}
         <AnimatePresence>
-            {selectedGroup && (
+            {(selectedGroup || isLiveMode) && (
                 <motion.div 
                     className={styles.groupSection}
                     initial={{ width: 0, opacity: 0 }}
@@ -95,20 +95,24 @@ export const NeonDock: React.FC<NeonDockProps> = memo(({
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', paddingRight: '0.25rem' }}>
                     <div className={styles.separator} />
 
-                    <DockItem 
-                      label="Dashboard"
-                      isActive={currentView === 'main' && !!selectedGroup}
-                      onClick={() => onViewChange('main')}
-                      color="var(--color-accent)"
-                      icon={
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <rect x="3" y="3" width="7" height="7"></rect>
-                          <rect x="14" y="3" width="7" height="7"></rect>
-                          <rect x="14" y="14" width="7" height="7"></rect>
-                          <rect x="3" y="14" width="7" height="7"></rect>
-                        </svg>
-                      }
-                    />
+                    {selectedGroup && (
+                    <>
+                        <DockItem 
+                          label="Dashboard"
+                          isActive={currentView === 'main' && !!selectedGroup}
+                          onClick={() => onViewChange('main')}
+                          color="var(--color-accent)"
+                          icon={
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <rect x="3" y="3" width="7" height="7"></rect>
+                              <rect x="14" y="3" width="7" height="7"></rect>
+                              <rect x="14" y="14" width="7" height="7"></rect>
+                              <rect x="3" y="14" width="7" height="7"></rect>
+                            </svg>
+                          }
+                        />
+                    </>
+                    )}
 
                     {/* LIVE OPS TAB - Only visible when Active */}
                     <AnimatePresence>
@@ -138,47 +142,51 @@ export const NeonDock: React.FC<NeonDockProps> = memo(({
                         )}
                     </AnimatePresence>
 
-                    <DockItem 
-                      label="Auto-Mod"
-                      isActive={currentView === 'moderation'}
-                      onClick={() => onViewChange('moderation')}
-                      color="var(--color-primary)"
-                      icon={
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
-                        </svg>
-                      }
-                    />
+                    {selectedGroup && (
+                    <>
+                        <DockItem 
+                          label="Auto-Mod"
+                          isActive={currentView === 'moderation'}
+                          onClick={() => onViewChange('moderation')}
+                          color="var(--color-primary)"
+                          icon={
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+                            </svg>
+                          }
+                        />
 
-                    <DockItem 
-                      label="Audit Logs"
-                      isActive={currentView === 'audit'}
-                      onClick={() => onViewChange('audit')}
-                      color="var(--color-accent)"
-                      icon={
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                          <polyline points="14 2 14 8 20 8"></polyline>
-                          <line x1="16" y1="13" x2="8" y2="13"></line>
-                          <line x1="16" y1="17" x2="8" y2="17"></line>
-                          <polyline points="10 9 9 9 8 9"></polyline>
-                        </svg>
-                      }
-                    />
+                        <DockItem 
+                          label="Audit Logs"
+                          isActive={currentView === 'audit'}
+                          onClick={() => onViewChange('audit')}
+                          color="var(--color-accent)"
+                          icon={
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                              <polyline points="14 2 14 8 20 8"></polyline>
+                              <line x1="16" y1="13" x2="8" y2="13"></line>
+                              <line x1="16" y1="17" x2="8" y2="17"></line>
+                              <polyline points="10 9 9 9 8 9"></polyline>
+                            </svg>
+                          }
+                        />
 
-                    <DockItem 
-                      label="Database"
-                      isActive={currentView === 'database'}
-                      onClick={() => onViewChange('database')}
-                      color="var(--color-primary)"
-                      icon={
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <ellipse cx="12" cy="5" rx="9" ry="3"></ellipse>
-                          <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path>
-                          <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path>
-                        </svg>
-                      }
-                    />
+                        <DockItem 
+                          label="Database"
+                          isActive={currentView === 'database'}
+                          onClick={() => onViewChange('database')}
+                          color="var(--color-primary)"
+                          icon={
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <ellipse cx="12" cy="5" rx="9" ry="3"></ellipse>
+                              <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path>
+                              <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path>
+                            </svg>
+                          }
+                        />
+                    </>
+                    )}
                   </div>
                 </motion.div>
             )}

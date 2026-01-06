@@ -196,8 +196,8 @@ class LogWatcherService extends EventEmitter {
 
     // 2. Player Joined: "OnPlayerJoined Name (usr_...)" - handles prefixes
     const rePlayerJoined = /OnPlayerJoined\s+(?:\[[^\]]+\]\s*)?([^\r\n(]+?)\s*\((usr_[a-f0-9-]{36})\)/;
-    // 3. Player Left: "OnPlayerLeft Name (usr_...)"
-    const rePlayerLeft = /OnPlayerLeft\s+([^\r\n(]+?)\s*\((usr_[a-f0-9-]{36})\)/;
+    // 3. Player Left: "OnPlayerLeft Name (usr_...)" - Now flexible
+    const rePlayerLeft = /OnPlayerLeft\s+([^\r\n(]+)(?:\s*\((usr_[a-f0-9-]{36})\))?/;
     // 4. Entering Room (World Name) - usually has [Behaviour]
     const reEntering = /\[Behaviour\] Entering Room: (.+)/;
 
@@ -223,10 +223,8 @@ class LogWatcherService extends EventEmitter {
         if (this.state.currentLocation !== location) {
             log.info(`[LogWatcher] Location CHANGED from ${this.state.currentLocation} to ${location}`);
             
-            // Clear players only if world changed (same world, different instance = keep players briefly)
-            if (this.state.currentWorldId !== worldId) {
-                this.state.players.clear();
-            }
+            // Clear players on ANY location change to prevent ghost players
+            this.state.players.clear();
             
             this.state.currentWorldId = worldId;
             this.state.currentLocation = location;
@@ -274,13 +272,19 @@ class LogWatcherService extends EventEmitter {
     const playerLeftMatch = line.match(rePlayerLeft);
     if (playerLeftMatch) {
         const displayName = playerLeftMatch[1].trim();
-        const userId = playerLeftMatch[2];
+        const userId = playerLeftMatch[2]; // Optional now
         
-        log.info(`[LogWatcher] MATCH Player Left: ${displayName} (${userId})`);
+        log.info(`[LogWatcher] MATCH Player Left: ${displayName} ${userId ? `(${userId})` : ''}`);
         
-        this.state.players.delete(displayName);
-        this.emitToRenderer('log:player-left', { displayName, userId, timestamp });
-        this.emit('player-left', { displayName, userId, timestamp });
+        // Remove from map if exists
+        if (this.state.players.has(displayName)) {
+             const entry = this.state.players.get(displayName)!;
+             this.state.players.delete(displayName);
+             // Use stored ID if available (preferred) over captured one
+             const finalId = entry.userId || userId;
+             this.emitToRenderer('log:player-left', { displayName, userId: finalId, timestamp });
+             this.emit('player-left', { displayName, userId: finalId, timestamp });
+        }
     }
   }
 

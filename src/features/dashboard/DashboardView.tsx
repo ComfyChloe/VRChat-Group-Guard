@@ -1,6 +1,7 @@
-﻿import React, { useEffect, useState, memo } from 'react';
+﻿import React, { useEffect, useState, memo, useMemo } from 'react';
 import { useGroupStore } from '../../stores/groupStore';
 import { useAuditStore } from '../../stores/auditStore';
+import { useUserProfileStore } from '../../stores/userProfileStore';
 import { useDataRefresh } from '../../hooks/useDataRefresh';
 import { usePipelineStatus } from '../../hooks/usePipelineInit';
 import { GlassPanel } from '../../components/ui/GlassPanel';
@@ -12,6 +13,7 @@ import { RequestsListDialog } from '../dashboard/dialogs/RequestsListDialog';
 import { BansListDialog } from '../dashboard/dialogs/BansListDialog';
 import { InstancesListDialog } from '../dashboard/dialogs/InstancesListDialog';
 import { InstanceMonitorWidget } from './widgets/InstanceMonitorWidget';
+import { MemberSearchWidget } from './widgets/MemberSearchWidget';
 import { StatTile } from './components/StatTile';
 import styles from './DashboardView.module.css';
 import { motion } from 'framer-motion';
@@ -56,6 +58,7 @@ export const DashboardView: React.FC = memo(() => {
       isMembersLoading,
   } = useGroupStore();
   const { logs, fetchLogs, isLoading: isLogsLoading } = useAuditStore();
+  const { openProfile } = useUserProfileStore();
   
   // Pipeline WebSocket connection status
   const pipelineStatus = usePipelineStatus();
@@ -75,6 +78,37 @@ export const DashboardView: React.FC = memo(() => {
   const lastLogCountRef = React.useRef(0);
   const hasFetchedMembersRef = React.useRef(false);
   const lastGroupIdRef = React.useRef<string | null>(null);
+  
+  // Audit filter state
+  type AuditFilterType = 'all' | 'joins' | 'requests' | 'invited' | 'bans' | 'instances' | 'mod' | 'settings';
+  const [auditFilter, setAuditFilter] = useState<AuditFilterType>('all');
+  
+  // Filter logs based on selected tab
+  const filteredLogs = useMemo(() => {
+    if (auditFilter === 'all') return logs;
+    
+    return logs.filter(log => {
+      const eventType = (log.eventType || '').toLowerCase();
+      switch (auditFilter) {
+        case 'joins':
+          return eventType.includes('join') || eventType.includes('leave');
+        case 'requests':
+           return eventType.includes('request');
+        case 'invited':
+           return eventType.includes('invite') && !eventType.includes('request');
+        case 'bans':
+          return eventType.includes('ban') || eventType.includes('unban') || eventType.includes('kick');
+        case 'instances':
+          return (eventType.includes('instance') && (eventType.includes('create') || eventType.includes('close') || eventType.includes('open')));
+        case 'mod':
+          return eventType.includes('warn') || eventType.includes('mute') || eventType.includes('role');
+        case 'settings':
+          return eventType.includes('update') || eventType.includes('create') || eventType.includes('delete') || eventType.includes('edit');
+        default:
+          return true;
+      }
+    });
+  }, [logs, auditFilter]);
 
   // Initial member fetch (once per app open) and reset on group change
   useEffect(() => {
@@ -263,13 +297,32 @@ export const DashboardView: React.FC = memo(() => {
                     </NeonButton>
                 </div>
                 
+                {/* Filter Tabs */}
+                <div className={styles.auditTabs}>
+                    {(['all', 'joins', 'requests', 'invited', 'bans', 'instances', 'mod', 'settings'] as const).map(tab => (
+                        <button
+                            key={tab}
+                            className={`${styles.auditTab} ${auditFilter === tab ? styles.auditTabActive : ''}`}
+                            onClick={() => setAuditFilter(tab)}
+                        >
+                            {tab === 'all' ? 'ALL' : 
+                             tab === 'joins' ? 'JOINS' : 
+                             tab === 'requests' ? 'REQUESTS' :
+                             tab === 'invited' ? 'INVITED' :
+                             tab === 'bans' ? 'BANS' : 
+                             tab === 'instances' ? 'INSTANCES' :
+                             tab === 'mod' ? 'MOD' : 'OTHER'}
+                        </button>
+                    ))}
+                </div>
+                
                 <div className={styles.logList}>
-                    {logs.length === 0 && !isLogsLoading ? (
+                    {filteredLogs.length === 0 && !isLogsLoading ? (
                         <div className={styles.emptyState}>
-                            -- No visible spectrum events --
+                            -- No {auditFilter === 'all' ? '' : auditFilter + ' '}events --
                         </div>
                     ) : (
-                        logs.map((log) => (
+                        filteredLogs.map((log) => (
                             <div key={log.id} className={styles.logItem}>
                                 <div 
                                     className={styles.logDot} 
@@ -280,7 +333,12 @@ export const DashboardView: React.FC = memo(() => {
                                 />
                                 <div className={styles.logContent}>
                                     <div className={styles.logMeta}>
-                                        <span className={styles.actorName}>
+                                        <span 
+                                            className={styles.actorName}
+                                            style={{ cursor: log.actorId ? 'pointer' : 'default' }}
+                                            onClick={() => log.actorId && openProfile(log.actorId)}
+                                            title={log.actorId ? 'View profile' : undefined}
+                                        >
                                             {log.actorDisplayName}
                                         </span>
                                         <span className={styles.timestamp}>
@@ -297,9 +355,12 @@ export const DashboardView: React.FC = memo(() => {
                 </div>
             </GlassPanel>
 
-            {/* Right: Instance Monitor */}
+            {/* Right: Instance Monitor + Member Search */}
             <div className={styles.monitorColumn}>
-                <InstanceMonitorWidget />
+                <MemberSearchWidget />
+                <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
+                    <InstanceMonitorWidget />
+                </div>
             </div>
         </div>
 

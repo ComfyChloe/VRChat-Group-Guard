@@ -1,8 +1,8 @@
-import React, { useEffect, memo } from 'react';
+import React, { useEffect, memo, useState } from 'react';
 import { useGroupStore } from '../../stores/groupStore';
-import { GlassPanel } from '../../components/ui/GlassPanel';
+import { useInstanceMonitorStore } from '../../stores/instanceMonitorStore';
 import { NeonButton } from '../../components/ui/NeonButton';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import styles from './GroupSelectionView.module.css';
 
 // Memoized animation variants (stable references)
@@ -11,19 +11,28 @@ const containerVariants = {
   show: {
     opacity: 1,
     transition: {
-      staggerChildren: 0.08 // Faster stagger
+      staggerChildren: 0.08
     }
   }
 };
 
 const itemVariants = {
-  hidden: { opacity: 0, y: 20 },
-  show: { opacity: 1, y: 0, transition: { type: "spring" as const, stiffness: 300, damping: 24 } }
+  hidden: { opacity: 0, scale: 0.9 },
+  show: { opacity: 1, scale: 1, transition: { type: "spring" as const, stiffness: 300, damping: 24 } }
 };
 
 export const GroupSelectionView: React.FC = memo(() => {
-  const { myGroups, fetchMyGroups, selectGroup, isLoading, error } = useGroupStore();
+  const { myGroups, fetchMyGroups, selectGroup, enterRoamingMode, isLoading, error } = useGroupStore();
+  const { currentWorldId, currentWorldName, instanceImageUrl } = useInstanceMonitorStore();
   const [activeGroupId, setActiveGroupId] = React.useState<string | null>(null);
+  const [isLarge, setIsLarge] = useState(window.innerWidth > 1100);
+
+  // Responsive Check
+  useEffect(() => {
+    const handleResize = () => setIsLarge(window.innerWidth > 1100);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   useEffect(() => {
     fetchMyGroups();
@@ -93,68 +102,206 @@ export const GroupSelectionView: React.FC = memo(() => {
         variants={containerVariants}
         initial="hidden"
         animate="show"
-        className={styles.grid}
+        className={`${styles.grid} ${isLarge ? styles.gridLarge : styles.gridCompact}`}
+        layout // Animate grid column changes
       >
+        {/* Roaming/Live Card - Show if in world but not in a managed group instance */}
+        {currentWorldId && (!activeGroupId || !myGroups.some(g => g.id === activeGroupId)) && (
+             <motion.div 
+                key="roaming-card" 
+                variants={itemVariants} 
+                initial="hidden"
+                animate="show"
+                layout
+             >
+              <div 
+                 className={`${styles.cardPanel} ${isLarge ? styles.cardLarge : styles.cardCompact}`}
+                 onClick={() => enterRoamingMode()}
+                 onKeyDown={(e) => {
+                   if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      enterRoamingMode();
+                   }
+                 }}
+                 role="button"
+                 tabIndex={0}
+                 style={{ outline: 'none', borderColor: 'var(--color-primary)' }}
+              >
+                  {/* Background Banner */}
+                  <AnimatePresence>
+                    {isLarge && instanceImageUrl && (
+                        <motion.div 
+                            className={styles.banner} 
+                            style={{ backgroundImage: `url(${instanceImageUrl})` }}
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }} 
+                        />
+                    )}
+                    {isLarge && !instanceImageUrl && (
+                        <motion.div 
+                            className={styles.bannerFallback}
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 0.2 }}
+                            exit={{ opacity: 0 }}
+                        />
+                    )}
+                  </AnimatePresence>
+
+                  {/* Roaming Badge - Simulating a "LIVE" state for roaming */}
+                  <motion.div
+                      layoutId="roaming-badge"
+                      initial={{ scale: 0 }}
+                      animate={{ scale: 1 }}
+                      className={styles.liveBadge}
+                      style={{ background: '#22c55e', color: 'black', fontWeight: 900 }}
+                  >
+                      ROAMING
+                  </motion.div>
+
+                  {/* Green Glowing Live Indicator (Icon Placeholder) */}
+                  <motion.div 
+                    layoutId="icon-roaming"
+                    className={styles.groupIconPlaceholder}
+                    style={{ 
+                        border: '2px solid #22c55e',
+                        boxShadow: '0 0 15px rgba(34, 197, 94, 0.5)',
+                        color: '#22c55e',
+                        background: 'rgba(34, 197, 94, 0.1)'
+                    }}
+                  >
+                      <div style={{ width: 12, height: 12, background: 'currentColor', borderRadius: '50%', boxShadow: '0 0 10px currentColor' }} />
+                  </motion.div>
+
+                  {/* Content Container */}
+                  {isLarge ? (
+                      <motion.div 
+                        className={styles.overlayContent}
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: 10 }}
+                      >
+                           <motion.div className={styles.groupName} layoutId="name-roaming">
+                              {currentWorldName || 'Unknown World'}
+                           </motion.div>
+                           
+                           <div className={styles.metaRow}>
+                             <span className={styles.shortCode} style={{ color: '#22c55e', borderColor: '#22c55e' }}>LIVE</span>
+                             <span className={styles.memberCount} style={{ color: '#86efac' }}>
+                               Viewing Live Data
+                             </span>
+                           </div>
+                      </motion.div>
+                  ) : (
+                      <motion.div className={styles.groupName} layoutId="name-roaming">
+                          {currentWorldName || 'Unknown World'}
+                      </motion.div>
+                  )}
+
+              </div>
+            </motion.div>
+        )}
+
         {myGroups.map((group) => {
-          // Check if user is currently in this group's instance
           const isLive = group.id === activeGroupId;
           
           return (
-            <motion.div key={group.id} variants={itemVariants}>
-            <motion.div 
-               whileHover={{ 
-                 y: -8, 
-                 boxShadow: isLive 
-                    ? '0 15px 30px rgba(0, 255, 100, 0.3), 0 0 20px rgba(0, 255, 100, 0.2) inset' // Green glow for live
-                    : '0 15px 30px rgba(var(--primary-hue), 0.3), 0 0 20px rgba(var(--primary-hue), 0.2) inset' 
-               }}
-               transition={{ type: 'spring', stiffness: 300, damping: 20 }}
-               onClick={() => selectGroup(group)}
-               onKeyDown={(e) => {
-                 if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    selectGroup(group);
-                 }
-               }}
-               role="button"
-               tabIndex={0}
-               style={{ cursor: 'pointer', height: '100%', outline: 'none' }}
-            >
-               <GlassPanel className={`${styles.cardPanel} ${isLive ? styles.cardLive : styles.cardDefault}`}>
-                 {/* Live Badge */}
-                 {isLive && (
-                     <motion.div
-                        initial={{ opacity: 0, scale: 0.8 }}
-                        animate={{ opacity: 1, scale: 1 }}
-                        className={styles.liveBadge}
-                     >
-                        LIVE
-                     </motion.div>
-                 )}
+            <motion.div key={group.id} variants={itemVariants} layout>
+              <div 
+                 className={`${styles.cardPanel} ${isLarge ? styles.cardLarge : styles.cardCompact} ${isLive ? styles.cardLive : ''}`}
+                 onClick={() => selectGroup(group)}
+                 onKeyDown={(e) => {
+                   if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      selectGroup(group);
+                   }
+                 }}
+                 role="button"
+                 tabIndex={0}
+                 style={{ outline: 'none' }}
+              >
+                  {/* Background Banner (Large Mode Only) */}
+                  <AnimatePresence>
+                    {isLarge && group.bannerUrl && (
+                        <motion.div 
+                            className={styles.banner} 
+                            style={{ backgroundImage: `url(${group.bannerUrl})` }}
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }} 
+                        />
+                    )}
+                    {isLarge && !group.bannerUrl && (
+                        <motion.div 
+                            className={styles.bannerFallback}
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 0.2 }} // Fallback opacity is managed in CSS usually, but explicit here helps fade
+                            exit={{ opacity: 0 }}
+                        />
+                    )}
+                  </AnimatePresence>
 
-                 {/* Background Banner */}
-                 {group.bannerUrl ? (
-                   <div className={styles.banner} style={{ backgroundImage: `url(${group.bannerUrl})` }} />
-                 ) : (
-                    <div className={styles.bannerFallback} />
-                 )}
+                  {/* Live Badge - Shared Layout Id for smooth position swap */}
+                  {isLive && (
+                      <motion.div
+                          layoutId={`live-${group.id}`}
+                          initial={{ scale: 0 }}
+                          animate={{ scale: 1 }}
+                          className={styles.liveBadge}
+                      >
+                          LIVE
+                      </motion.div>
+                  )}
 
-                 {/* Content Overlay */}
-                 <div className={styles.contentOverlay}>
-                   {group.iconUrl && (
-                     <img src={group.iconUrl} className={styles.groupIcon} alt="" />
-                   )}
-                   <h3 className={styles.groupName}>{group.name}</h3>
-                   <div className={styles.metaRow}>
-                     <span className={styles.shortCode}>{group.shortCode}</span>
-                     <span className={styles.memberCount}>
-                       {group.memberCount} Members
-                     </span>
-                   </div>
-                 </div>
-               </GlassPanel>
+                  {/* Group Icon - Shared Element */}
+                  {group.iconUrl ? (
+                      <motion.img 
+                        layoutId={`icon-${group.id}`}
+                        src={group.iconUrl} 
+                        className={styles.groupIcon} 
+                        alt="" 
+                      />
+                  ) : (
+                      <motion.div 
+                        layoutId={`icon-${group.id}`}
+                        className={styles.groupIconPlaceholder}
+                      >
+                          {group.shortCode || group.name.substring(0, 2).toUpperCase()}
+                      </motion.div>
+                  )}
+
+                  {/* Content Container (Name + Meta) */}
+                  {/* In Large Mode, we wrap text in an overlay div. In Compact, just text. 
+                      To make this smooth, we can render the overlay div conditionally but keep the name shared? 
+                      Actually, simpler to just have different structures since the parent layout handles the morph.
+                  */}
+                  
+                  {isLarge ? (
+                      <motion.div 
+                        className={styles.overlayContent}
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: 10 }}
+                      >
+                           <motion.div className={styles.groupName} layoutId={`name-${group.id}`} title={group.name}>
+                              {group.name}
+                           </motion.div>
+                           
+                           <div className={styles.metaRow}>
+                             <span className={styles.shortCode}>{group.shortCode}</span>
+                             <span className={styles.memberCount}>
+                               {group.memberCount} Members
+                             </span>
+                           </div>
+                      </motion.div>
+                  ) : (
+                      <motion.div className={styles.groupName} layoutId={`name-${group.id}`} title={group.name}>
+                          {group.name}
+                      </motion.div>
+                  )}
+
+              </div>
             </motion.div>
-          </motion.div>
           );
         })}
       </motion.div>

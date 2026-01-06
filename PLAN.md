@@ -1,109 +1,70 @@
-# VRChat Group Guard - Implementation Plan
+Step Id: 14
 
-## 1. Project Overview
+# Implementation Plan: Database Migration
 
-"VRChat Group Guard" is a comprehensive desktop application designed for VRChat group owners and moderators. It aims to be the ultimate tool for group control, moderation, auditing, and activity logging, featuring a stunning, customizable UI and a robust database.
+## 1. Overview
 
-## 2. Technology Stack (Modern 2026 Standard)
+The current application uses file-based JSON logging (`.jsonl`) for storing instance history and moderation logs. We will migrate this to a robust **SQLite** database using **Prisma** ORM. This ensures better performance, data integrity, and easier querying.
 
-To ensure code cleanliness, expandability, and performance:
+## 2. New Architecture
 
-- **Core Runtime**: **Electron** (Latest) - For cross-platform desktop capabilities.
-- **Language**: **TypeScript** - Enforced strict mode for type safety and maintainability.
-- **Frontend Framework**: **React 19** (or latest) with **Vite** - For high-performance UI rendering.
-- **Styling**: **Vanilla CSS (CSS Modules)** with **CSS Variables**.
-  - _Why_: Maximum control over the "jaw-dropping" aesthetic and performance.
-  - _Theming_: A global CSS variable system controlled by React state for real-time user customization (colors, blur strength, border radius).
-  - _Animations_: **Framer Motion** for complex, fluid layout animations.
-- **Database**: **SQLite** with **Prisma ORM**.
-  - _Why_: Prisma provides a type-safe, "beautifully organized" way to interact with the database. SQLite is local, fast, and sufficient for a desktop app.
-  - _Migrations_: Built-in schema management to handle app evolution.
-- **State Management**: **Zustand**.
-  - _Why_: Minimalistic, clean, and avoids the boilerplate of Redux.
-- **API Client**: **TanStack Query** (React Query) + Custom VRChat API Wrapper.
-  - _Why_: Handles caching, polling, and synchronization with VRChat servers seamlessly.
-- **Logging**: **Electron-Log** + Custom Error Boundary.
-  - _Why_: Filesystem logging for debugging and a UI overlay for immediate error feedback.
+- **Database Engine**: SQLite
+- **ORM**: Prisma (already installed)
+- **Database Location**: Managed by `StorageService` (defaults to User Documents or Configured Path).
 
-## 3. Architecture & Data Flow
+## 3. Schema Design
 
-### The "Beautifully Organized Database"
+We will define the following models:
 
-The database will be the source of truth for local logs.
+- **Session**: Represents a continuous visit to a VRChat instance.
+- **LogEntry**: Represents individual events (joins, leaves, moderations) within a session.
 
-- **Entities**: `User`, `Group`, `ModerationAction`, `AuditLog`, `Note`, `ThemePreset`.
-- **Syncing**: The app will fetch data from VRChat API and mirror relevant parts (like member lists) to the local DB for faster searching/sorting.
+## 4. Files to Modify/Create
 
-### Modular Design
+### A. `prisma/schema.prisma` (New/Update)
 
-- **`src/main`**: Electron main process (OS interactions, window management).
-- **`src/renderer`**: UI code.
-  - `components/`: Reusable distinct UI elements (Buttons, Cards, Inputs).
-  - `features/`: Feature-specific logic (GroupModeration, UserAudit).
-  - `layouts/`: Page structures.
-  - `styles/`: Global theme definitions.
-- **`src/shared`**: Shared types and constants.
-- **`src/services`**: Database logic, VRChat API wrapper, Logging service.
+Define the SQLite datasource and models.
 
-## 4. UI/UX Design Philosophy
+### B. `electron/services/DatabaseService.ts` (New)
 
-- **Aesthetic**: "Premium Glassmorphism" / "Cyberpunk Luxury".
-  - Deep, rich backgrounds with blurred overlays.
-  - Subtle glowing borders and shadows.
-  - Smooth transitions between states.
-- **Customization**:
-  - Users can pick primary/secondary colors, background images/videos, and UI density.
-  - Theme presets (e.g., "Dark Neon", "Clean Glass", "OLED Pitch Black").
-- **Organization**:
-  - **Sidebar Navigation**: Iconic, collapsible.
-  - **Datagrid Views**: High-density but legible lists for logs and users, with advanced filtering/search.
-  - **Context Menus**: Right-click actions for quick moderation.
+A singleton service responsible for:
 
-## 5. Core Features Roadmap
+- Initializing the Prisma Client with the dynamic database path from `StorageService`.
+- Handling database connections.
+- Exposing methods for creating sessions and logs.
 
-### Phase 1: Foundation
+### C. `electron/services/InstanceLoggerService.ts` (Refactor)
 
-1.  Setup project with TypeScript, Electron, Vite, Prisma.
-2.  Implement the "Theme Engine" (CSS Variables + React Context).
-3.  Establish the Logging/Error Handling system.
-4.  Build the VRChat Authentication flow (2FA support).
+- **Remove**: All `fs` (file system) operations related to writing `.jsonl` files.
+- **Inject**: `DatabaseService`.
+- **Logic Change**:
+  - `handleLocationChange`: Call `db.createSession()`.
+  - `logEvent`: Call `db.createLogEntry()`.
+  - `getSessions`: Query `db.sessions.findMany()`.
 
-### Phase 2: The Dashboard & Database
+### D. `electron/services/StorageService.ts` (Update)
 
-1.  Design the "Home" dashboard (Overview stats).
-2.  Implement the "Data Explorer" (The generic database viewer requested).
-3.  Connect VRChat "Groups" API to fetch and store group details.
+- Ensure it provides a stable path for the `database.sqlite` file.
 
-### Phase 3: Core Features (Moderation & Audit)
+## 5. Implementation Steps
 
-- [ ] **Data Integration**
-  - [x] **Groups Service**: Fetch joined groups (`GET /groups?member=true`).
-  - [x] **Audit Service**: Fetch logs (`GET /groups/{groupId}/auditLogs`).
-  - [ ] **Instance Service**: Fetch active group instances (`GET /groups/{groupId}/instances`).
-- [ ] **Moderation Actions**
-  - [ ] **Ban User**: `POST /groups/{groupId}/bans`.
-  - [ ] **Kick User**: `DELETE /groups/{groupId}/members/{userId}`.
-  - [ ] **Warn User**: _Note: No native API. Implement local "Infraction" tracking._
-  - [ ] **Join Requests**: List (`GET /groups/{groupId}/requests`) and Respond (`PUT`).
-- [ ] **Database & Logging**
-  - [ ] **Local DB**: Store "Soft Warnings" and moderator notes not supported by API.
-  - [ ] **Logs**: Persist audit logs locally for searchability beyond API limits (API limit ~100).
+1.  **Define Schema**: Write `prisma/schema.prisma`.
+2.  **Generate Client**: Run `npx prisma generate`.
+3.  **Setup Database Service**: Implement the service class that connects Prisma to the correct `sqlite` file at runtime.
+4.  **Refactor Logger**: Replace file IO in `InstanceLoggerService` with DB calls.
+5.  **Initialize DB**: Ensure the DB file is created/migrated on app launch.
 
-### Phase 4: Polish & Expansion
+## 6. Double Check Strategy
 
-1.  Advanced animations & transitions.
-2.  User-defined macros/scripts (if requested later).
-3.  Public release packaging.
+- **Verification**:
+  - Launch app.
+  - Check if `database.sqlite` is created in the configured folder.
+  - "Join" an instance (or simulate location change).
+  - Verify a new row exists in the `Session` table.
+  - Verify logs appear in the `LogEntry` table.
+- **Fallback**:
+  - If DB initialization fails, log error to console (and optionally fallback to memory for that session, but DB is critical).
 
-## 6. Development Guidelines
+---
 
-- **Strict Typing**: No `any`. Define interfaces for everything (especially API responses).
-- **Error Boundaries**: Every major view must have a fallback UI if it crashes.
-- **Clean Components**: Keep components small (< 200 lines). Extract logic to hooks.
-- **Documentation**: Comments on complex logic.
-
-## 7. Next Steps
-
-1.  Initialize the repository.
-2.  Install dependencies.
-3.  Configure the build system.
+**Status**: Ready to Execute.

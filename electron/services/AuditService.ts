@@ -1,5 +1,6 @@
 import { ipcMain } from 'electron';
 import log from 'electron-log';
+const logger = log.scope('AuditService');
 import { getVRChatClient } from './AuthService';
 
 export function setupAuditHandlers() {
@@ -10,7 +11,7 @@ export function setupAuditHandlers() {
       const client = getVRChatClient();
       if (!client) throw new Error('Not authenticated. Please log in first.');
 
-      log.info(`Fetching audit logs for group: ${groupId}`);
+      logger.info(`Fetching audit logs for group: ${groupId}`);
       
       // Use the SDK's built-in getGroupAuditLogs method
       const response = await client.getGroupAuditLogs({ 

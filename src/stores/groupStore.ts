@@ -24,6 +24,7 @@ interface GroupState {
   selectedGroup: Group | null;
   isLoading: boolean;
   error: string | null;
+  isRoamingMode: boolean;
 
   // Data for selected group (cached between tab switches)
   requests: GroupRequest[];
@@ -56,6 +57,7 @@ interface GroupState {
   fetchGroupBans: (groupId: string) => Promise<void>;
   fetchGroupMembers: (groupId: string, offset?: number) => Promise<void>;
   fetchGroupInstances: (groupId: string) => Promise<void>;
+  respondToRequest: (groupId: string, userId: string, action: 'accept' | 'deny') => Promise<void>;
   
   // Get timestamp helper
   getLastFetchedAt: (type: keyof typeof REFRESH_INTERVALS) => number;
@@ -63,11 +65,15 @@ interface GroupState {
   // Pipeline event handlers
   handlePipelineEvent: (event: PipelineEvent) => void;
   clearRealtimeUpdate: () => void;
+  
+  enterRoamingMode: () => void;
+  exitRoamingMode: () => void;
 }
 
 export const useGroupStore = create<GroupState>((set, get) => ({
   myGroups: [],
   selectedGroup: null,
+  isRoamingMode: false,
   isLoading: false,
   error: null,
   
@@ -111,6 +117,8 @@ export const useGroupStore = create<GroupState>((set, get) => ({
   selectGroup: (group) => {
     // Keep cached data when switching back to same group
     const currentGroup = get().selectedGroup;
+    set({ isRoamingMode: false }); // Always exit roaming mode when selecting a group (or null)
+    
     if (currentGroup?.id === group?.id) return;
     
     // Clear data only when switching to a different group
@@ -194,6 +202,25 @@ export const useGroupStore = create<GroupState>((set, get) => ({
     }
   },
 
+  respondToRequest: async (groupId: string, userId: string, action: 'accept' | 'deny') => {
+      try {
+          const result = await window.electron.respondToGroupRequest(groupId, userId, action);
+          if (result.success) {
+              set(state => ({
+                  requests: state.requests.filter(req => req.user.id !== userId)
+              }));
+              // Optionally fetch members if accepted, but pipeline usually handles it
+              if (action === 'accept') {
+                   // Optimistic update or waiting for pipeline
+              }
+          } else {
+              console.error(`Failed to ${action} request:`, result.error);
+          }
+      } catch (error) {
+          console.error(`Failed to ${action} request:`, error);
+      }
+  },
+
   // ========================================
   // PIPELINE EVENT HANDLING
   // ========================================
@@ -256,6 +283,24 @@ export const useGroupStore = create<GroupState>((set, get) => ({
 
   clearRealtimeUpdate: () => {
     set({ hasRealtimeUpdate: false });
+  },
+
+  enterRoamingMode: () => {
+    set({ 
+        selectedGroup: null, 
+        isRoamingMode: true,
+        requests: [], 
+        bans: [], 
+        members: [], 
+        instances: [],
+        lastFetchedAt: { requests: 0, bans: 0, members: 0, instances: 0 },
+        hasRealtimeUpdate: false,
+        lastPipelineEvent: null
+    });
+  },
+
+  exitRoamingMode: () => {
+    set({ isRoamingMode: false });
   }
 }));
 

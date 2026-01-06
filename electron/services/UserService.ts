@@ -1,10 +1,11 @@
 import { ipcMain } from 'electron';
 import log from 'electron-log';
+const logger = log.scope('UserService');
 import { getVRChatClient } from './AuthService';
 
 // Simple in-memory cache
 // Map<userId, { data: UserData, timestamp: number }>
-const userCache = new Map<string, { data: any; timestamp: number }>();
+const userCache = new Map<string, { data: unknown; timestamp: number }>();
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
 export function setupUserHandlers() {
@@ -20,7 +21,7 @@ export function setupUserHandlers() {
       // Check cache
       const cached = userCache.get(userId);
       if (cached && (Date.now() - cached.timestamp < CACHE_TTL)) {
-        log.debug(`Serving user ${userId} from cache`);
+        logger.debug(`Serving user ${userId} from cache`);
         return { success: true, user: cached.data };
       }
 
@@ -40,9 +41,10 @@ export function setupUserHandlers() {
 
       return { success: true, user: response.data };
 
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const err = error as { message?: string };
       log.error(`Failed to fetch user ${userId}:`, error);
-      return { success: false, error: error.message || 'Failed to fetch user' };
+      return { success: false, error: err.message || 'Failed to fetch user' };
     }
   });
 

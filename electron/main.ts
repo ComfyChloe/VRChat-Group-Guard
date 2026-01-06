@@ -2,6 +2,7 @@ import { app, BrowserWindow, shell, ipcMain, dialog } from 'electron';
 import path from 'path';
 import { autoUpdater } from 'electron-updater';
 import log from 'electron-log';
+const logger = log.scope('App');
 
 // ========================================
 // LOGGING & ERROR HANDLING
@@ -10,25 +11,25 @@ import log from 'electron-log';
 // Configure logging for production
 log.initialize();
 log.transports.file.level = 'info';
-log.transports.console.level = process.env.NODE_ENV === 'development' ? 'debug' : 'warn';
+log.transports.console.level = process.env.NODE_ENV === 'development' ? 'info' : 'warn';
 
-log.info('========================================');
-log.info(`VRChat Group Guard v${app.getVersion()} starting...`);
-log.info(`Electron: ${process.versions.electron}`);
-log.info(`Chrome: ${process.versions.chrome}`);
-log.info(`Node: ${process.versions.node}`);
-log.info(`Platform: ${process.platform} ${process.arch}`);
-log.info('========================================');
+logger.info('========================================');
+logger.info(`VRChat Group Guard v${app.getVersion()} starting...`);
+logger.info(`Electron: ${process.versions.electron}`);
+logger.info(`Chrome: ${process.versions.chrome}`);
+logger.info(`Node: ${process.versions.node}`);
+logger.info(`Platform: ${process.platform} ${process.arch}`);
+logger.info('========================================');
 
 // Catch unhandled exceptions
 // Catch unhandled exceptions
 process.on('uncaughtException', (error) => {
-  log.error('Uncaught Exception:', error);
+  logger.error('Uncaught Exception:', error);
   
   // Specific mitigation for the "verified:false" VRChat API error
   // This seems to be a non-fatal API response bubbling up as an error
   if (error.message && error.message.includes('"verified":false')) {
-      log.warn('Ignored "verified:false" error to prevent crash.');
+      logger.warn('Ignored "verified:false" error to prevent crash.');
       return;
   }
 
@@ -38,7 +39,7 @@ process.on('uncaughtException', (error) => {
 
 // Catch unhandled promise rejections
 process.on('unhandledRejection', (reason, promise) => {
-  log.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  logger.error('Unhandled Rejection at:', promise, 'reason:', reason);
 });
 
 // ========================================
@@ -70,6 +71,14 @@ const createWindow = () => {
 
   mainWindow = new BrowserWindow(windowConfig);
 
+  // Toggle DevTools with Ctrl+D
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    if (input.control && input.key.toLowerCase() === 'd' && input.type === 'keyDown') {
+      event.preventDefault();
+      mainWindow?.webContents.toggleDevTools();
+    }
+  });
+
   // Show window when ready to avoid flicker
   mainWindow.once('ready-to-show', () => {
     mainWindow?.show();
@@ -80,7 +89,7 @@ const createWindow = () => {
     if (url.startsWith('https:')) {
       shell.openExternal(url);
     } else {
-      log.warn(`Blocked non-https external URL: ${url}`);
+      logger.warn(`Blocked non-https external URL: ${url}`);
     }
     return { action: 'deny' };
   });
@@ -90,17 +99,17 @@ const createWindow = () => {
     const parsedUrl = new URL(navigationUrl);
     if (parsedUrl.origin !== 'http://localhost:5173' && parsedUrl.protocol !== 'file:') {
       event.preventDefault();
-      log.warn(`Blocked navigation to external URL: ${navigationUrl}`);
+      logger.warn(`Blocked navigation to external URL: ${navigationUrl}`);
     }
   });
 
   // Load the app
   if (process.env.NODE_ENV === 'development') {
     mainWindow.loadURL('http://localhost:5173');
-    log.info('Loading development server at http://localhost:5173');
+    logger.info('Loading development server at http://localhost:5173');
   } else {
     mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
-    log.info('Loading production build');
+    logger.info('Loading production build');
   }
 
   // Handle window close
@@ -153,6 +162,11 @@ ipcMain.handle('storage:set-path', (_event, path) => {
 // Initialize storage service
 storageService.initialize();
 
+import { databaseService } from './services/DatabaseService';
+databaseService.initialize().catch(err => {
+    logger.error('Failed to initialize database:', err);
+});
+
 // Setup handlers
 setupAuthHandlers();
 setupGroupHandlers();
@@ -188,7 +202,7 @@ ipcMain.handle('window:close', () => {
 // ========================================
 
 app.whenReady().then(async () => {
-  log.info('App ready, creating window...');
+  logger.info('App ready, creating window...');
   createWindow();
 
   // Open DevTools in development
@@ -203,26 +217,26 @@ app.whenReady().then(async () => {
           // @ts-expect-error - log types might mismatch slightly but it works
           autoUpdater.logger.transports.file.level = 'info';
 
-          log.info('Initializing auto-updater...');
+          logger.info('Initializing auto-updater...');
           
           autoUpdater.on('checking-for-update', () => {
-              log.info('Checking for updates...');
+              logger.info('Checking for updates...');
           });
 
           autoUpdater.on('update-available', (info) => {
-              log.info('Update available:', info);
+              logger.info('Update available:', info);
           });
 
           autoUpdater.on('update-not-available', (info) => {
-              log.info('Update not available:', info);
+              logger.info('Update not available:', info);
           });
 
           autoUpdater.on('error', (err) => {
-              log.error('Error in auto-updater:', err);
+              logger.error('Error in auto-updater:', err);
           });
 
           autoUpdater.on('download-progress', (progressObj) => {
-              log.info(`Download speed: ${progressObj.bytesPerSecond} - Downloaded ${progressObj.percent}%`);
+              logger.info(`Download speed: ${progressObj.bytesPerSecond} - Downloaded ${progressObj.percent}%`);
           });
 
           // Check but don't force notify yet, we'll handle the UI
@@ -230,14 +244,14 @@ app.whenReady().then(async () => {
           
           // When update is ready, tell the UI to show the modal
           autoUpdater.on('update-downloaded', (info) => {
-              log.info('Update downloaded:', info);
+              logger.info('Update downloaded:', info);
               // Small delay to ensure UI is ready if it happened on startup
               setTimeout(() => {
                   mainWindow?.webContents.send('updater:update-downloaded');
               }, 2000);
           });
       } catch (err) {
-          log.error('Failed to check for updates:', err);
+          logger.error('Failed to check for updates:', err);
       }
   }
 
@@ -272,7 +286,7 @@ app.whenReady().then(async () => {
 
 // Quit when all windows are closed (except on macOS)
 app.on('window-all-closed', () => {
-  log.info('All windows closed');
+  logger.info('All windows closed');
   if (process.platform !== 'darwin') {
     app.quit();
   }
@@ -280,6 +294,6 @@ app.on('window-all-closed', () => {
 
 // Clean up before quit
 app.on('before-quit', () => {
-  log.info('Application quitting...');
+  logger.info('Application quitting...');
 });
 
