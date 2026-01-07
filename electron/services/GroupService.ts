@@ -455,12 +455,24 @@ export function setupGroupHandlers() {
             const allInstances = extractArray(data);
             logger.info(`[INSTANCES] getUserGroupInstances returned ${allInstances.length} total instances`);
             
-            if (allInstances.length > 0) {
-              logger.info('[INSTANCES] First instance keys:', Object.keys(allInstances[0] as object));
-              logger.info('[INSTANCES] First instance data:', safeStringify(allInstances[0]));
+            // SECURITY: Filter out any instances belonging to unauthorized groups
+            // This protects against the API returning data for groups we are in but don't manage
+            const authorizedInstances = groupAuthorizationService.filterAuthorizedData(allInstances, (inst: unknown) => {
+                const i = inst as Record<string, unknown>;
+                // Try to find the group ID this instance belongs to
+                if (typeof i.groupId === 'string') return i.groupId;
+                if (i.group && typeof (i.group as Record<string, unknown>).id === 'string') return (i.group as Record<string, unknown>).id as string;
+                // ownerId format for group instances is usually "grp_..."
+                if (typeof i.ownerId === 'string' && i.ownerId.startsWith('grp_')) return i.ownerId;
+                return undefined;
+            });
+
+            if (authorizedInstances.length > 0) {
+              logger.info('[INSTANCES] First instance keys:', Object.keys(authorizedInstances[0] as object));
+              logger.info('[INSTANCES] First instance data:', safeStringify(authorizedInstances[0]));
               
               // Try multiple filter strategies
-              instances = allInstances.filter((inst: unknown) => {
+              instances = authorizedInstances.filter((inst: unknown) => {
                 const i = inst as Record<string, unknown>;
                 const matchGroupId = i.groupId === groupId;
                 const matchGroupObj = (i.group as Record<string, unknown>)?.id === groupId;

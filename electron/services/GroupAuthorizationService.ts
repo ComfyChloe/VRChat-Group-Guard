@@ -143,6 +143,42 @@ class GroupAuthorizationService {
     }
 
     /**
+     * Filters a list of data items to ensure they only belong to authorized groups.
+     * Useful for cleaning API responses that might return data for groups the user
+     * is in but doesn't have moderation permissions for.
+     * 
+     * @param items Array of data items to filter
+     * @param groupIdExtractor Function to extract the group ID from an item
+     * @returns Array containing only items belonging to authorized groups
+     */
+    public filterAuthorizedData<T>(items: T[], groupIdExtractor: (item: T) => string | undefined): T[] {
+        if (!Array.isArray(items)) {
+            return [];
+        }
+
+        const filtered = items.filter(item => {
+            try {
+                const groupId = groupIdExtractor(item);
+                // If we can't extract a group ID, we assume it's not group-specific data
+                // OR it's malformed. To be safe/strict as requested:
+                if (!groupId) return false;
+                
+                return this.isGroupAllowed(groupId);
+            } catch (e) {
+                logger.error('[SECURITY] Error extracting group ID during filter:', e);
+                return false;
+            }
+        });
+
+        const removedCount = items.length - filtered.length;
+        if (removedCount > 0) {
+            logger.warn(`[SECURITY] Cleaned API data: Removed ${removedCount} items belonging to unauthorized groups.`);
+        }
+
+        return filtered;
+    }
+
+    /**
      * Check if the service has been initialized with group data
      */
     public isInitialized(): boolean {
